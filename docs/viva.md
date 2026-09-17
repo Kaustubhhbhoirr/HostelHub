@@ -11,7 +11,7 @@ A web portal for a college hostel. Students see their room, report maintenance p
 It is a small Python web framework: routes are just Python functions (`@app.route`). It gives us sessions, templates and request handling without forcing a complex structure. That suits a project whose whole team has to understand the code.
 
 ### 3. Why SQLite?
-SQLite keeps the whole database in one file and needs no server to install. It is part of Python (`import sqlite3`), and it still supports real SQL: foreign keys, UNIQUE constraints, indexes and transactions. For a single-hostel demo it is enough; a bigger deployment could move to MySQL/PostgreSQL.
+SQLite keeps the whole database in one file and needs no server to install. It is part of Python (`import sqlite3`), and it still supports real SQL: foreign keys, UNIQUE constraints, indexes and transactions. It is what we use for local development and tests. The deployed website uses PostgreSQL instead (see question 27).
 
 ### 4. Why plain SQL instead of an ORM?
 So we can see and explain every query in the viva. An ORM hides the SQL. Plain SQL also shows JOIN, GROUP BY, transactions and constraints directly.
@@ -73,10 +73,10 @@ A student asked to move to that specific bed. We hold it so the warden can't giv
 ### 18. How does image upload work? Is it safe?
 The form uses `enctype="multipart/form-data"`, and Flask gives us `request.files["image"]`. `save_complaint_image()` then:
 - checks the extension (allow-list), the MIME type, and the **first bytes** of the file (a real PNG/JPEG/GIF/WEBP signature)
-- saves the file under a random `uuid4` name in `uploads/complaints/`, which is **outside** `static/`
+- saves the file under a random `uuid4` name through `storage.py`: locally in `uploads/complaints/` (not a public folder), on Vercel in a **private** Supabase Storage bucket
 - stores only the file name in the database
 
-Images are shown through `/complaints/<id>/image`, which sends the file only to the student who owns the complaint or a warden. Uploads are limited to 5 MB (`MAX_CONTENT_LENGTH`).
+Images are shown through `/complaints/<id>/image`, which sends the file only to the student who owns the complaint or a warden. Uploads are limited to 4 MB (`MAX_CONTENT_LENGTH`), below Vercel's 4.5 MB request limit.
 
 ### 19. How are notifications created?
 `create_notification()` inserts a row when a real event happens (complaint submitted, status changed, request approved, …), inside the same transaction as the event. The bell count is `SELECT COUNT(*) … WHERE is_read = 0`, run on each page load.
@@ -91,7 +91,7 @@ With SQL: `COUNT(*)`, `GROUP BY status`, `SUM(CASE WHEN …)`. Nothing is hard-c
 A column that must match a row in another table, e.g. `beds.room_id REFERENCES rooms(id)`. SQLite refuses a bed for a room that doesn't exist, and refuses to delete a student who still has complaints.
 
 ### 23. How did you test the project?
-69 automated `unittest` tests, each using a temporary database, plus 4 manual browser workflows checked against the database, a clean-install test, and responsive measurements. `check_database.py` runs 11 consistency checks after every test. See `docs/testing.md`.
+75 automated `unittest` tests, each on a fresh database (SQLite by default; the same tests also pass on PostgreSQL), plus manual browser workflows checked against the database, a production-mode HTTP test, a clean-install test and responsive measurements. `check_database.py` runs 11 consistency checks after every test. See `docs/testing.md`.
 
 ### 24. How would Firebase login be added?
 Only `authenticate_local()` in `routes/auth.py` changes. The new version verifies the Google ID token from Firebase, checks the email ends with `@mes.ac.in`, and finds the user in our `users` table. `login_user()`, sessions, role checks and every page stay the same, and the role still comes from our database.
@@ -103,6 +103,21 @@ It runs on the development server with a demo secret key; there's no college log
 Firebase Google sign-in, a college-admin role, fee/mess management, PDF/Excel reports, email notifications, and complaint trend charts.
 
 ---
+
+### 27. Why SQLite locally but PostgreSQL on Vercel?
+SQLite is a single file with nothing to install, which is ideal on a laptop. Vercel runs Flask as a function with a **temporary** file system, so a SQLite file there could be lost. A hosted PostgreSQL server keeps data permanently. The SQL is the same; `database.py` only converts `?` placeholders to `%s` and gets new ids with `RETURNING id`.
+
+### 28. What are environment variables? Why use them?
+Settings given to the program from outside the code: the terminal, or Vercel's dashboard. Secrets (the session secret key, database password, storage key) live there instead of in Git, so publishing the code does not publish the secrets. `config.py` reads them with `os.environ.get()`. Locally none are needed.
+
+### 29. How is Flask deployed on Vercel?
+Vercel detects `app.py` exporting a Flask object named `app`, installs `requirements.txt`, and runs the app as a Vercel Function. There is no `vercel.json`. CSS/JS/images in `public/static/` are served directly by Vercel's CDN. Each `git push` redeploys.
+
+### 30. Why do uploaded photos need separate storage?
+For the same reason as the database: files written inside a Vercel Function can disappear. Photos go to a **private** Supabase Storage bucket. The database stores only the file name. Our Flask route checks owner/warden first, then fetches the photo with a server-only key, so the photo never becomes public.
+
+### 31. How does production stay safe from mistakes?
+On startup, `check_production_settings()` stops the app if the secret key, `DATABASE_URL` or storage settings are missing, instead of running with the public demo key or a temporary SQLite file. Debug is always off, the cookie is `Secure`, and the hosted database is never seeded automatically (`python seed.py` asks you to type `RESET`).
 
 ## Python concepts you can point to
 

@@ -1,5 +1,42 @@
 # HostelHub — Architecture
 
+## 0. Two ways HostelHub runs
+
+The **same code** runs in two modes. Only the settings (environment variables) change.
+
+```
+LOCAL DEVELOPMENT                         PRODUCTION (DEPLOYMENT)
+
+  Browser                                   Browser
+     │  http://127.0.0.1:5000                  │  https://your-app.vercel.app
+     ▼                                         ▼
+  Flask  (python app.py)                    Vercel
+     │                                         ├── CDN: public/static/* (CSS, JS, images)
+     ├──▶ SQLite file                          ▼
+     │    database/hostelhub.db             Flask app (app.py) as a Vercel Function
+     │                                         │
+     └──▶ Local folder                         ├──▶ Hosted PostgreSQL        (DATABASE_URL)
+          uploads/complaints/                  │
+                                               └──▶ Private Supabase Storage (SUPABASE_URL)
+```
+
+| | Local | Production |
+|---|---|---|
+| How it is chosen | no environment variables | `VERCEL=1` (set by Vercel) + `DATABASE_URL` + `SUPABASE_URL` |
+| Database engine | SQLite (a single file, nothing to install) | PostgreSQL (a database server that keeps data permanently) |
+| Complaint photos | `uploads/complaints/` | private object-storage bucket |
+| Debug pages | only with `HOSTELHUB_DEBUG=1` | always off |
+| Session cookie | normal | `Secure` (HTTPS only) |
+| Setting up data | automatic on first run / `python seed.py` | once, by hand: `python seed.py` with `DATABASE_URL` set |
+
+**Why is storage different?** A Vercel Function's file system is temporary and not shared between
+copies of the function. A SQLite file or a photo saved there could vanish after the next deployment,
+or after the function simply restarts. SQLite is perfect on a laptop; for a website that must
+remember data, the database and the photos have to live in services built to keep them.
+
+If a production setting is missing, `check_production_settings()` in `config.py` stops the app at
+startup with a clear message. It never silently falls back to the demo secret key or a temporary SQLite file.
+
 ## 1. The big picture
 
 HostelHub is a **server-rendered Flask application**. The server builds every page as HTML;
@@ -26,7 +63,7 @@ JavaScript only adds small conveniences (previews, confirmation dialogs, the bed
       │                                     └────────────┬─────────────┘
       │                                                  │ parameterised SQL
       │                                     ┌────────────▼─────────────┐
-      │                                     │ SQLite hostelhub.db      │
+      │                                     │ SQLite or PostgreSQL     │
       │                                     └────────────┬─────────────┘
       │                                                  │ commit / rollback
       │                                     ┌────────────▼─────────────┐
@@ -39,9 +76,10 @@ JavaScript only adds small conveniences (previews, confirmation dialogs, the bed
 
 | File | Responsibility |
 |---|---|
-| `app.py` | Creates the Flask app, seeds the database on the first run, registers the 8 blueprints, template filters (`date`, `timeago`, …), the context processor (bell count, sidebar badges) and error pages |
-| `config.py` | `Config` class (paths, secret key, upload limit, cookie settings) and every choice list (categories, statuses, transitions) |
-| `database.py` | `get_db()` (one connection per request in `g`), `query_all`, `query_one`, `execute`, `now_str` |
+| `app.py` | Creates the Flask app (the Vercel entrypoint), runs the production settings check, seeds the **local** SQLite database on the first run, registers the 8 blueprints, template filters (`date`, `timeago`, …), the context processor (bell count, sidebar badges) and error pages |
+| `config.py` | `Config` class read from environment variables (secret key, `DATABASE_URL`, Supabase storage, upload limit, cookie settings), `check_production_settings()`, and every choice list |
+| `database.py` | `connect()` for SQLite or PostgreSQL, `?` → `%s` conversion, `get_db()` (one connection per request in `g`), `query_all`, `query_one`, `execute`, `create_tables`, India-time `now_str` |
+| `storage.py` | Complaint photos: `save_file`, `read_file`, `delete_file`, `file_exists`, using a local folder or a private Supabase bucket |
 | `helpers.py` | Rules shared by several routes: notifications, `allocate_bed` / `vacate_bed` / `move_student`, reservations, image upload checks |
 | `routes/auth.py` | Login, logout, loading the user, CSRF token, role decorators |
 | `routes/account.py` | Notifications and profile (both roles) |
@@ -52,9 +90,9 @@ JavaScript only adds small conveniences (previews, confirmation dialogs, the bed
 | `routes/requests.py` | Room-change requests for both roles |
 | `routes/college.py` | College maintenance requests |
 | `templates/` | `base.html` layout, `_macros.html` reusable pieces, one folder per feature |
-| `static/js/main.js` | Confirmation dialog, submit spinners, clickable rows |
-| `static/js/room-map.js` | Fills the bed modal from `data-*` attributes; live search on the map |
-| `static/js/complaint-form.js` | Image preview, drag and drop, quick form checks |
+| `public/static/js/main.js` | Confirmation dialog, submit spinners, clickable rows |
+| `public/static/js/room-map.js` | Fills the bed modal from `data-*` attributes; live search on the map |
+| `public/static/js/complaint-form.js` | Image preview, drag and drop, quick form checks |
 | `check_database.py` | Consistency checks (also run after every test) |
 
 ## 3. Role-based access flow
@@ -82,8 +120,8 @@ The role is **never** read from the form, the URL, JavaScript or the cookie.
 
 Helpers such as `allocate_bed()` and `create_notification()` **never commit**.
 The route performs all related steps and then calls `commit()` once.
-If a rule is broken (`InvalidAllocationError`) or SQLite fails (`sqlite3.Error`),
-the route calls `rollback()`, so the database looks exactly as it did before.
+If a rule is broken (`InvalidAllocationError`) or the database fails (`DatabaseError`, which covers
+both SQLite and PostgreSQL errors), the route calls `rollback()`, so the database looks exactly as it did before.
 
 ## 5. How the allocation map gets its colours
 
@@ -95,10 +133,21 @@ the route calls `rollback()`, so the database looks exactly as it did before.
 ## 6. Image uploads
 
 ```
-<input type=file> → POST multipart/form-data → save_complaint_image()
+<input type=file> → POST multipart/form-data (max 4 MB) → helpers.save_complaint_image()
    checks: allowed extension · MIME starts with image/ · first bytes are a real PNG/JPEG/GIF/WEBP
    name:   uuid4().hex + extension (user's file name never used)
-   saved:  uploads/complaints/<name>   (outside static/, not public)
-   DB:     complaints.image_path = "<name>"
-Viewing: /complaints/<id>/image → owner student or warden only → send_from_directory()
+   saved:  storage.save_file()
+             local      → uploads/complaints/<name>
+             production → POST https://<project>.supabase.co/storage/v1/object/<bucket>/<name>
+   DB:     complaints.image_path = "<name>"   (never the image bytes)
+
+Viewing: <img src="/complaints/<id>/image">
+   1. @login_required, then owner student or warden only (others → 404)
+   2. storage.read_file()
+             local      → read the file
+             production → GET .../storage/v1/object/authenticated/<bucket>/<name> with the secret key
+   3. Flask returns the bytes (Cache-Control: private)
 ```
+
+The bucket is private and the secret key stays on the server, so the browser never receives a
+storage link. Knowing a photo's address is not enough: the same owner/warden check runs in both modes.

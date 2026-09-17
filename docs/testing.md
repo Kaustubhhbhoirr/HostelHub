@@ -1,6 +1,8 @@
 # HostelHub — Testing
 
-All results below were recorded during the final audit on **17 Sep 2026** (Python 3.14, Flask 3.1.3).
+Sections 1–4 were recorded during the final audit on **17 Sep 2026** (Python 3.14, Flask 3.1.3).
+Section 5 was added during deployment preparation (same day), after PostgreSQL, private storage and
+Vercel support were introduced.
 
 ## 1. Automated tests
 
@@ -8,7 +10,8 @@ All results below were recorded during the final audit on **17 Sep 2026** (Pytho
 python -m unittest discover tests -v
 ```
 
-**Result: 69 tests, OK.** The suite was run several times, including twice in a row after the final code change.
+**Result (final audit): 69 tests, OK.** The suite was run several times, including twice in a row after the final code change.
+**Result (deployment preparation): 75 tests, OK on SQLite and 75 tests, OK on PostgreSQL.** See section 5.
 
 How the tests work:
 - `tests/base.py` builds a **fresh temporary database** for every test with `seed_database()`. The demo database is never touched.
@@ -103,7 +106,7 @@ Other manual checks:
 - Forced a server error with debug off → friendly 500 page, no traceback or internal details in the response (traceback only in the server log).
 - **Clean install:** copied the project without `.venv` or the database → new venv → `pip install -r requirements.txt` (installed only Flask and its dependencies) → `python seed.py` → `python check_database.py` → started the server → GET /login (200, CSRF field present) → POST login → reached /warden/dashboard.
 
-## 4. Responsive / UI checks
+## 4. Responsive / UI checks (final audit)
 
 Measured with JavaScript in the built-in browser at **1366×768** and **390×844**: horizontal overflow, elements sticking out of the page, clipped buttons, and inputs without labels.
 
@@ -117,3 +120,91 @@ Measured with JavaScript in the built-in browser at **1366×768** and **390×844
 Fixed during these checks: missing accessible labels on the student search, complaint search, map search and complaint description.
 
 **Limitation (honest note):** the built-in browser pane was hidden during the audit, so **screenshots could not be captured** and CSS animations did not run (the drawer's slide animation was paused; with animations off, its final position is correct). Layout was verified by measurement, not by eye. **Do one visual pass on a real laptop and phone before the demo.**
+
+## 5. Deployment preparation tests
+
+### 5.1 Automated tests on both database engines
+
+```bash
+python -m unittest discover tests -v
+```
+
+SQLite (default): **75 tests, OK**.
+
+To run the same suite against PostgreSQL, set `HOSTELHUB_TEST_DATABASE_URL` to an **empty test
+database** (every test wipes it), then run the same command.
+
+PostgreSQL 18 (a temporary local server): **75 tests, OK**. This includes the room-change rollback test,
+the database-level double-allocation test, CHECK and foreign-key violations, and case-insensitive search.
+
+New test file `tests/test_storage.py` (6 tests) starts a small fake Supabase Storage server and checks:
+
+| Test | What it proves |
+|---|---|
+| photo stored in bucket, not on local disk | uploads go to the bucket with the right content type |
+| only owner and warden can view | private download endpoint + key used; other student 404 and logged-out redirect **before** any storage request; page never contains the storage URL or key |
+| missing object | 404 instead of a broken page |
+| wrong key / unreachable storage | friendly "could not be saved", no complaint row, nothing stored |
+| complaint save fails | the uploaded photo is deleted again |
+| unsafe stored name | `../secret.png` is refused without contacting storage |
+
+The fake server follows the documented Supabase Storage endpoints. **It is not the real Supabase service.**
+
+### 5.2 Seed and consistency check on PostgreSQL
+
+With `DATABASE_URL` pointing to the local PostgreSQL server:
+
+| Command | Result |
+|---|---|
+| `python seed.py`, answering anything other than `RESET` | "Cancelled. Nothing was changed." |
+| `python seed.py --yes` | same demo data as SQLite: 73 users, 32 rooms, 100 beds, 68 allocations, 13 complaints, 4 room requests, 4 college requests, 11 notifications |
+| `python check_database.py` | "PostgreSQL database is consistent: all 11 checks passed." |
+| `pg_indexes` | `idx_one_active_allocation_per_bed ... WHERE (status = 'active')` exists |
+
+### 5.3 Production mode over real HTTP
+
+The app was started with `VERCEL=1`, a random `HOSTELHUB_SECRET_KEY`, the local PostgreSQL `DATABASE_URL`
+and the fake private storage server, then driven by an HTTP client with cookies and CSRF tokens.
+Server banner: `debug = False | secure cookie = True`.
+
+**24/24 checks passed**: login page and `/static` CSS; student login; `Secure` + `HttpOnly` session cookie;
+My Room; complaint with photo; owner sees the photo with `Cache-Control: private`; room-change request;
+student blocked from warden page (403); logout; another student gets 404 for the photo; logged-out
+photo request redirected; warden login; warden sees the photo; complaint status update; bed allocated (map red)
+and vacated (map green); room change approved; college request sent; notifications; custom 404;
+valid CSRF POST accepted; POST without token rejected (400); student received status and approval notifications.
+
+Afterwards the new complaint was in PostgreSQL, **no file was written to `uploads/complaints/`**, and
+`check_database.py` on PostgreSQL passed.
+
+(A first attempt accidentally ran in local mode, because the helper imported the test base module, which
+blanks deployment variables. The banner revealed it, so that run was discarded and repeated correctly.)
+
+Startup safety checks (production mode):
+
+| Missing / wrong setting | Result |
+|---|---|
+| nothing set | stops: secret key, `DATABASE_URL` and Supabase settings all reported |
+| `SUPABASE_URL` not `https://` | stops with the storage message |
+| demo or short secret key | stops with the secret-key message |
+
+An oversized upload (just over 4 MB) returns the friendly 413 page.
+
+### 5.4 Responsive re-check (production mode, after moving static files to `public/static/`)
+
+Measured in the built-in browser (horizontal overflow, elements sticking out, clipped buttons):
+
+| Pages | 1366×768 | 390×844 |
+|---|---|---|
+| Login | OK (brand panel shown) | OK (brand panel hidden, form 342px wide) |
+| 8 student pages (dashboard, room, complaints, new complaint, complaint detail with photo, room requests, notifications, profile) | OK | OK |
+| 17 warden pages (all list, detail and form pages, map A/1 and C/2) | OK | OK (16; map C/2 checked at desktop only) |
+| Map on mobile | — | 16 beds, each ≥ 139×81px; occupied-bed pop-up fits (8px margins); legend shows 5 statuses; menu opens |
+
+The complaint photo loaded in the browser through `/complaints/14/image` in production mode.
+Screenshots were not possible because the browser pane was hidden; layout was verified by measurement.
+
+### 5.5 Not tested
+
+- A **real Vercel deployment** (no Vercel account or CLI in this environment). Running `vercel dev` needs the Vercel CLI (`npm i -g vercel`) and a Vercel login.
+- **Real Supabase** PostgreSQL and Storage (no account available). See [deployment.md](deployment.md) step 7 for the checklist to run after deploying.

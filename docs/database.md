@@ -1,8 +1,41 @@
 # HostelHub — Database
 
-SQLite file: `database/hostelhub.db`. Schema: `database/schema.sql`. Rebuild: `python seed.py`. Check: `python check_database.py`.
+Schema (single source of truth): `database/schema.sql`. Rebuild: `python seed.py`. Check: `python check_database.py`.
 
-Foreign keys are switched on for every connection (`PRAGMA foreign_keys = ON` in `database.py`),
+## 0. Two database engines, one set of SQL
+
+| | Local development | Production (Vercel) |
+|---|---|---|
+| Engine | **SQLite**: file `database/hostelhub.db` | **PostgreSQL**: hosted (e.g. Supabase) |
+| Chosen when | `DATABASE_URL` is empty | `DATABASE_URL=postgresql://...` |
+| Python driver | `sqlite3` (built into Python) | `psycopg` (in `requirements.txt`) |
+| Created by | first run of `app.py`, or `python seed.py` | `python seed.py` with `DATABASE_URL` set (asks you to type `RESET`) |
+
+**Why SQLite locally?** It is a single file, needs no installation or password, and resets in a second,
+which is perfect for development, testing and viva demos on a laptop.
+
+**Why PostgreSQL in production?** Vercel's file system is temporary, so a SQLite file there could lose
+every complaint and allocation. A hosted PostgreSQL server keeps data permanently, handles many users
+at once, and enforces the same constraints.
+
+**How the same SQL works on both** (`database.py`):
+
+| Difference | SQLite | PostgreSQL | How HostelHub handles it |
+|---|---|---|---|
+| Value placeholder | `?` | `%s` | all queries use `?`; `to_engine_sql()` converts for PostgreSQL |
+| New row id | `cursor.lastrowid` | `INSERT ... RETURNING id` | `insert()` adds `RETURNING id` for PostgreSQL |
+| Auto-increment id | `INTEGER PRIMARY KEY AUTOINCREMENT` | `SERIAL PRIMARY KEY` | `create_tables()` swaps the text when running `schema.sql` |
+| Foreign keys | off unless `PRAGMA foreign_keys = ON` | always on | PRAGMA runs only for SQLite |
+| `LIKE` search | ignores capital letters | case-sensitive | queries use `LOWER(column) LIKE ?` |
+| Error classes | `sqlite3.Error` | `psycopg.Error` | routes catch `DatabaseError` / `IntegrityError`, which cover both |
+| Row access | `sqlite3.Row` | `dict_row` | both allow `row["column"]` |
+| Partial unique index | supported | supported | same SQL, no change needed |
+| Dates | stored as text `YYYY-MM-DD HH:MM:SS` in India time | same | same |
+
+Everything else (CHECK constraints, UNIQUE, foreign keys, `JOIN`, `GROUP BY`, `CASE`) is identical SQL.
+All 75 automated tests pass on both engines (PostgreSQL 18 was used for testing).
+
+Foreign keys are switched on for every SQLite connection (`PRAGMA foreign_keys = ON` in `database.connect()`),
 because SQLite ignores them by default.
 
 ## 1. Tables
@@ -113,6 +146,9 @@ available ◀──warden──▶ maintenance / unavailable   (only when free)
 5. `INSERT INTO notifications …`
 6. `commit()`. Any error → `rollback()` and nothing above is saved.
 
+This behaves the same on PostgreSQL: a failed statement marks the whole transaction as failed,
+and `rollback()` undoes every step. The automated rollback test passes on both engines.
+
 ## 4. Consistency checks (`check_database.py`)
 
 Each is a query that must return no rows:
@@ -122,4 +158,6 @@ Each is a query that must return no rows:
 - a reserved bed without a pending request / a pending request whose bed isn't reserved
 - a room whose bed count ≠ capacity; an inactive room with usable beds
 - a resolved complaint without `resolved_at`; an ended allocation without `ended_at`
-- plus `PRAGMA foreign_key_check` (broken references)
+- plus, on SQLite only, `PRAGMA foreign_key_check` (PostgreSQL never allows broken references to exist)
+
+The same checks run on PostgreSQL when `DATABASE_URL` is set.
