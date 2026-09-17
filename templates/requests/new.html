@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}Request Room Change{% endblock %}
+{% block topbar_title %}Student Portal{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('requests.student_list') }}" class="breadcrumb-link"><i class="bi bi-arrow-left"></i>Room change requests</a>
+{{ page_header('Request a room change', 'The warden reviews every request. Your room does not change until it is approved.') }}
+
+<form method="post" class="row g-3" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-body">
+        <div class="form-section-title">Current allocation</div>
+        <div class="move-visual mb-4 mt-2">
+          <div class="move-box"><small>You are in</small>{{ allocation.block }}-{{ allocation.room_number }} · Bed {{ allocation.bed_number }}</div>
+          <i class="bi bi-arrow-right move-arrow"></i>
+          <div class="move-box" id="targetPreview"><small>Move to</small>Any available bed</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" for="reason">Reason</label>
+          <select class="form-select" id="reason" name="reason" required>
+            <option value="">Choose a reason…</option>
+            {% for r in reasons %}<option {{ 'selected' if form.reason == r }}>{{ r }}</option>{% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" for="requested_bed_id">Preferred bed <span class="text-muted fw-normal">(optional)</span></label>
+          <select class="form-select" id="requested_bed_id" name="requested_bed_id">
+            <option value="">No preference — any available bed</option>
+            {% for block, beds in beds_by_block.items() %}
+              <optgroup label="Block {{ block }}">
+                {% for bed in beds %}
+                  <option value="{{ bed.id }}" {{ 'selected' if form.requested_bed_id == bed.id|string }}>
+                    {{ bed.block }}-{{ bed.room_number }} · Bed {{ bed.bed_number }} (Floor {{ bed.floor }}, {{ bed.capacity }}-seater)
+                  </option>
+                {% endfor %}
+              </optgroup>
+            {% else %}
+              <option disabled>No beds are free right now</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Only free beds are listed. Your choice is held for you until the warden decides.</div>
+        </div>
+
+        <div>
+          <label class="form-label" for="details">Explain your request</label>
+          <textarea class="form-control" id="details" name="details" rows="5" maxlength="800" required minlength="20"
+                    placeholder="Share any details that help the warden decide.">{{ form.details }}</textarea>
+          <div class="form-text">At least 20 characters.</div>
+        </div>
+      </div>
+      <div class="card-body border-top d-flex justify-content-end gap-2">
+        <a href="{{ url_for('requests.student_list') }}" class="btn btn-light">Cancel</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-send me-2"></i>Submit request</button>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="form-section-title mb-3"><i class="bi bi-signpost-split me-2 text-primary"></i>What happens next?</div>
+        {% set steps = [('bi-send', 'You submit the request', 'The warden gets a notification.'),
+                        ('bi-search', 'Warden reviews it', 'They check your reason and free beds.'),
+                        ('bi-check2-circle', 'Decision', 'If approved, your bed changes automatically and you are notified.')] %}
+        {% for icon, title, text in steps %}
+          <div class="action-item">
+            <span class="action-icon tone-indigo"><i class="bi {{ icon }}"></i></span>
+            <span><span class="action-title d-block">{{ title }}</span><span class="cell-sub">{{ text }}</span></span>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Show the chosen bed in the "Move to" box as soon as the student picks it.
+  const bedSelect = document.getElementById("requested_bed_id");
+  const preview = document.getElementById("targetPreview");
+  function updatePreview() {
+    const option = bedSelect.options[bedSelect.selectedIndex];
+    const label = bedSelect.value ? option.text.split("(")[0].trim() : "Any available bed";
+    preview.innerHTML = "<small>Move to</small>";
+    preview.appendChild(document.createTextNode(label));
+  }
+  bedSelect.addEventListener("change", updatePreview);
+  updatePreview();
+</script>
+{% endblock %}

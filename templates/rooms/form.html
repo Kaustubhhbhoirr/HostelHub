@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}{{ 'Edit room' if room else 'Add room' }}{% endblock %}
+{% block topbar_title %}Hostel Management{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('rooms.room_list') }}" class="breadcrumb-link"><i class="bi bi-arrow-left"></i>Rooms</a>
+{{ page_header('Edit room ' ~ room.block ~ '-' ~ room.room_number if room else 'Add room',
+               'Beds are created automatically from the capacity.') }}
+
+<div class="row g-3">
+  <div class="col-xl-7">
+    <form method="post" class="card" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-sm-4">
+            <label class="form-label" for="block">Block</label>
+            <input class="form-control text-uppercase" id="block" name="block" value="{{ values.block or '' }}" maxlength="2" required placeholder="A">
+          </div>
+          <div class="col-sm-4">
+            <label class="form-label" for="floor">Floor</label>
+            <input type="number" class="form-control" id="floor" name="floor" value="{{ values.floor if values.floor is not none else '' }}" min="0" max="20" required placeholder="2">
+            <div class="form-text">0 = ground floor</div>
+          </div>
+          <div class="col-sm-4">
+            <label class="form-label" for="room_number">Room number</label>
+            <input class="form-control" id="room_number" name="room_number" value="{{ values.room_number or '' }}" required placeholder="204">
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label" for="capacity">Capacity (beds)</label>
+            <select class="form-select" id="capacity" name="capacity">
+              {% for n in range(1, 7) %}<option value="{{ n }}" {{ 'selected' if values.capacity|string == n|string }}>{{ n }} {{ 'bed' if n == 1 else 'beds' }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label" for="status">Status</label>
+            <select class="form-select" id="status" name="status">
+              {% for s in room_statuses %}<option value="{{ s }}" {{ 'selected' if values.status == s }}>{{ s|capitalize }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="card-body border-top d-flex justify-content-end gap-2">
+        <a href="{{ url_for('rooms.room_list') }}" class="btn btn-light">Cancel</a>
+        <button type="submit" class="btn btn-primary">{{ 'Save changes' if room else 'Create room' }}</button>
+      </div>
+    </form>
+  </div>
+  <div class="col-xl-5">
+    <div class="card">
+      <div class="card-body">
+        <div class="form-section-title mb-2"><i class="bi bi-info-circle me-2 text-primary"></i>How room status works</div>
+        <ul class="info-list">
+          <li><span><span class="status-badge status-active">Active</span></span><span class="text-muted small text-end">Beds can be allocated.</span></li>
+          <li><span><span class="status-badge status-maintenance">Maintenance</span></span><span class="text-muted small text-end">Under repair; no new allocations.</span></li>
+          <li><span><span class="status-badge status-inactive">Inactive</span></span><span class="text-muted small text-end">Closed; beds become unavailable.</span></li>
+        </ul>
+        <p class="text-muted small mb-0 mt-2">A room can only be closed or put under maintenance when none of its beds are occupied or reserved. Capacity can only be reduced when the removed beds are free.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

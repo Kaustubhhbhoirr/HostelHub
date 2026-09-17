@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, empty_state %}
+{% block title %}Students{% endblock %}
+{% block topbar_title %}Hostel Management{% endblock %}
+
+{% block content %}
+{% call page_header('Students', students|length ~ ' student' ~ ('' if students|length == 1 else 's') ~ ' found') %}
+  <a href="{{ url_for('warden.student_new') }}" class="btn btn-primary"><i class="bi bi-person-plus me-2"></i>Add student</a>
+{% endcall %}
+
+<div class="card table-card">
+  {# GET form: filters appear in the URL (?q=...&block=A), so results can be bookmarked. #}
+  <form class="filter-bar" method="get" action="{{ url_for('warden.student_list') }}" data-no-loading>
+    <div class="search-input">
+      <i class="bi bi-search"></i>
+      <input type="search" class="form-control" name="q" value="{{ search }}" placeholder="Search by name, email or student ID" aria-label="Search students">
+    </div>
+    <select name="block" class="form-select w-auto" aria-label="Block">
+      <option value="">All blocks</option>
+      {% for b in blocks %}<option value="{{ b }}" {{ 'selected' if b == block }}>Block {{ b }}</option>{% endfor %}
+    </select>
+    <select name="allocation" class="form-select w-auto" aria-label="Allocation">
+      <option value="">All students</option>
+      <option value="allocated" {{ 'selected' if allocation_filter == 'allocated' }}>Allocated</option>
+      <option value="unallocated" {{ 'selected' if allocation_filter == 'unallocated' }}>Waiting for bed</option>
+      <option value="inactive" {{ 'selected' if allocation_filter == 'inactive' }}>Deactivated</option>
+    </select>
+    <button class="btn btn-primary" type="submit">Filter</button>
+    {% if search or block or allocation_filter %}
+      <a href="{{ url_for('warden.student_list') }}" class="btn btn-light">Clear</a>
+    {% endif %}
+  </form>
+
+  {% if students %}
+  <div class="table-responsive">
+    <table class="table table-hover">
+      <thead>
+        <tr><th>Student</th><th>Student ID</th><th class="d-none d-md-table-cell">Department</th><th>Room / Bed</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in students %}
+          <tr data-href="{{ url_for('warden.student_detail', student_id=s.id) }}">
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <span class="avatar avatar-sm">{{ s.name|initials }}</span>
+                <div class="min-w-0"><div class="cell-title">{{ s.name }}</div><div class="cell-sub text-truncate">{{ s.email }}</div></div>
+              </div>
+            </td>
+            <td class="fw-semibold">{{ s.student_id }}</td>
+            <td class="d-none d-md-table-cell"><div>{{ s.department }}</div><div class="cell-sub">Year {{ s.year_of_study }}</div></td>
+            <td>
+              {% if s.room_number %}<span class="fw-semibold">{{ s.block }}-{{ s.room_number }}</span> <span class="cell-sub">· Bed {{ s.bed_number }}</span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td>
+              {% if not s.is_active %}{{ status_badge('inactive') }}
+              {% elif s.room_number %}{{ status_badge('active') }}
+              {% else %}<span class="status-badge status-pending">Waiting for bed</span>{% endif %}
+            </td>
+            <td class="text-end text-nowrap">
+              {% if s.is_active and not s.room_number %}
+                <a href="{{ url_for('rooms.bed_map', student=s.id) }}" class="btn btn-sm btn-outline-primary">Allocate</a>
+              {% endif %}
+              <a href="{{ url_for('warden.student_edit', student_id=s.id) }}" class="btn btn-sm btn-light" title="Edit"><i class="bi bi-pencil"></i></a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    {{ empty_state('bi-person-x', 'No students found', 'Try a different search or clear the filters.', url_for('warden.student_list'), 'Clear filters') }}
+  {% endif %}
+</div>
+{% endblock %}

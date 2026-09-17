@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, priority_badge, empty_state, complaint_code %}
+{% block title %}My Complaints{% endblock %}
+{% block topbar_title %}Student Portal{% endblock %}
+
+{% block content %}
+{% call page_header('My complaints', 'Track the maintenance issues you have reported.') %}
+  <a href="{{ url_for('complaints.student_new') }}" class="btn btn-primary"><i class="bi bi-plus-lg me-2"></i>New complaint</a>
+{% endcall %}
+
+<div class="card table-card">
+  <div class="filter-bar">
+    <div class="status-tabs">
+      <a href="{{ url_for('complaints.student_list') }}" class="status-tab {{ 'active' if not status }}">All <span class="count">{{ counts.values()|sum }}</span></a>
+      {% for s in statuses %}
+        <a href="{{ url_for('complaints.student_list', status=s) }}" class="status-tab {{ 'active' if status == s }}">{{ s }} <span class="count">{{ counts.get(s, 0) }}</span></a>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if complaints %}
+  <div class="table-responsive">
+    <table class="table table-hover">
+      <thead><tr><th>Complaint</th><th class="d-none d-md-table-cell">Description</th><th>Priority</th><th>Status</th><th>Reported</th></tr></thead>
+      <tbody>
+        {% for c in complaints %}
+          <tr data-href="{{ url_for('complaints.student_detail', complaint_id=c.id) }}">
+            <td>
+              <div class="cell-title">{{ c.category }} {% if c.image_path %}<i class="bi bi-image text-muted ms-1" title="Has photo"></i>{% endif %}</div>
+              <div class="cell-sub">{{ complaint_code(c.id) }}</div>
+            </td>
+            <td class="d-none d-md-table-cell text-muted" style="max-width: 320px;"><div class="text-truncate">{{ c.description }}</div></td>
+            <td>{{ priority_badge(c.priority) }}</td>
+            <td>{{ status_badge(c.status) }}</td>
+            <td class="text-muted small text-nowrap">{{ c.created_at|date }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elif status %}
+    {{ empty_state('bi-funnel', 'No ' ~ status|lower ~ ' complaints', 'You have no complaints with this status.', url_for('complaints.student_list'), 'Show all') }}
+  {% else %}
+    {{ empty_state('bi-emoji-smile', 'No complaints yet', 'Something broken in your room? Report it and the warden will be notified.', url_for('complaints.student_new'), 'Report an issue') }}
+  {% endif %}
+</div>
+{% endblock %}

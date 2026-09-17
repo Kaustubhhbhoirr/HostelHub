@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, complaint_code %}
+{% block title %}{{ 'Edit draft' if existing else 'New college request' }}{% endblock %}
+{% block topbar_title %}Operations{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('college.request_list') }}" class="breadcrumb-link"><i class="bi bi-arrow-left"></i>College requests</a>
+{{ page_header('Edit draft request' if existing else 'New maintenance request to college',
+               'Save as a draft, or send it to the college administration right away.') }}
+
+<form method="post" class="row g-3" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="complaint_id" value="{{ values.complaint_id or '' }}">
+  <div class="col-xl-8">
+    <div class="card document-card">
+      <div class="card-body">
+        {% if values.complaint_id %}
+          <div class="alert alert-info py-2 mb-4"><i class="bi bi-link-45deg me-1"></i>Escalated from complaint <strong>{{ complaint_code(values.complaint_id) }}</strong>. The student will be notified when this is sent.</div>
+        {% endif %}
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="request_type">Request type</label>
+            <select class="form-select" id="request_type" name="request_type" required>
+              {% for t in request_types %}<option {{ 'selected' if values.request_type == t }}>{{ t }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="priority">Priority</label>
+            <select class="form-select" id="priority" name="priority">
+              {% for p in priorities %}<option {{ 'selected' if values.priority == p }}>{{ p }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="asset">Asset / item</label>
+            <input class="form-control" id="asset" name="asset" value="{{ values.asset or '' }}" required placeholder="e.g. Ceiling Fan">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="location">Location</label>
+            <input class="form-control" id="location" name="location" value="{{ values.location or '' }}" required placeholder="e.g. Block A, Room 204">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label" for="quantity">Quantity</label>
+            <input type="number" class="form-control" id="quantity" name="quantity" value="{{ values.quantity or 1 }}" min="1" max="500" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label" for="description">Problem description</label>
+            <textarea class="form-control" id="description" name="description" rows="6" required
+                      placeholder="Describe the problem and why repair or replacement is needed.">{{ values.description or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+      <div class="card-body border-top d-flex flex-wrap justify-content-end gap-2">
+        <a href="{{ url_for('college.request_list') }}" class="btn btn-light">Cancel</a>
+        <button type="submit" name="action" value="draft" class="btn btn-white"><i class="bi bi-file-earmark me-2"></i>Save draft</button>
+        <button type="submit" name="action" value="send" class="btn btn-primary"
+                data-confirm="Send this request to the college administration?" data-confirm-button="Send"><i class="bi bi-send me-2"></i>Send to college</button>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="form-section-title mb-3">Request lifecycle</div>
+        {% for s, text in [('Draft', 'Saved, not sent yet. Can be edited or deleted.'), ('Sent to College', 'Submitted to administration.'), ('Under Review', 'College is evaluating it.'), ('Approved', 'Work or purchase approved.'), ('Rejected', 'Not approved by college.'), ('Completed', 'Work finished.')] %}
+          <div class="d-flex gap-2 align-items-start mb-2">
+            <span class="status-badge status-{{ s|slug }}">{{ s }}</span>
+            <span class="text-muted small">{{ text }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}

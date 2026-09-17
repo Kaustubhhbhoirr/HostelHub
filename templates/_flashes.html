@@ -1,0 +1,15 @@
+{# Flash messages set in Python with flash("message", "category") appear here. #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="flash-stack">
+      {% for category, message in messages %}
+        {% set icon = {'success': 'bi-check-circle-fill', 'danger': 'bi-x-octagon-fill', 'warning': 'bi-exclamation-triangle-fill'}.get(category, 'bi-info-circle-fill') %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert"
+             {% if category in ('success', 'info') %}data-autohide{% endif %}>
+          <i class="bi {{ icon }} me-2"></i>{{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}

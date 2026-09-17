@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, empty_state, request_code %}
+{% block title %}Room Requests{% endblock %}
+{% block topbar_title %}Operations{% endblock %}
+
+{% block content %}
+{{ page_header('Room change requests', 'Review student requests to move rooms.') }}
+
+<div class="card table-card">
+  <div class="filter-bar">
+    <div class="status-tabs">
+      {% for s in statuses %}
+        <a href="{{ url_for('requests.warden_list', status=s) }}" class="status-tab {{ 'active' if status == s }}">{{ s }} <span class="count">{{ counts.get(s, 0) }}</span></a>
+      {% endfor %}
+      <a href="{{ url_for('requests.warden_list', status='all') }}" class="status-tab {{ 'active' if status == 'all' }}">All <span class="count">{{ counts.all }}</span></a>
+    </div>
+  </div>
+
+  {% if room_requests %}
+  <div class="table-responsive">
+    <table class="table table-hover">
+      <thead><tr><th>Request</th><th>Student</th><th>From → Preferred</th><th class="d-none d-lg-table-cell">Reason</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for r in room_requests %}
+          <tr data-href="{{ url_for('requests.warden_detail', request_id=r.id) }}">
+            <td><div class="cell-title">{{ request_code(r.id) }}</div><div class="cell-sub">{{ r.created_at|timeago }}</div></td>
+            <td><div>{{ r.student_name }}</div><div class="cell-sub">{{ r.roll_number }}</div></td>
+            <td class="text-nowrap">
+              <span class="fw-semibold">{{ r.current_block }}-{{ r.current_room_number }}</span>
+              <i class="bi bi-arrow-right text-primary mx-1"></i>
+              {% if r.requested_block %}<span class="fw-semibold">{{ r.requested_block }}-{{ r.requested_room_number }}</span> <span class="cell-sub">B{{ r.requested_bed_number }}</span>
+              {% else %}<span class="text-muted">Any</span>{% endif %}
+            </td>
+            <td class="d-none d-lg-table-cell text-muted" style="max-width: 260px;"><div class="text-truncate">{{ r.reason }}</div></td>
+            <td>{{ status_badge(r.status) }}</td>
+            <td class="text-end"><a href="{{ url_for('requests.warden_detail', request_id=r.id) }}" class="btn btn-sm {{ 'btn-primary' if r.status == 'Pending' else 'btn-light' }}">{{ 'Review' if r.status == 'Pending' else 'View' }}</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    {{ empty_state('bi-inbox', 'No ' ~ (status|lower if status != 'all' else '') ~ ' requests', 'Nothing to review here right now.') }}
+  {% endif %}
+</div>
+{% endblock %}

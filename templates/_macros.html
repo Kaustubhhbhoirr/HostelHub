@@ -1,0 +1,45 @@
+{# _macros.html — small reusable pieces of HTML (like functions for templates).
+   Import with: {% from "_macros.html" import status_badge, empty_state %} #}
+
+{# Sidebar link. "match" is the start of the endpoint names that should highlight this link. #}
+{% macro nav_link(endpoint, match, icon, label, count=0) %}
+  {% set active = request.endpoint and request.endpoint.startswith(match) %}
+  <a href="{{ url_for(endpoint) }}" class="nav-item-link {{ 'active' if active }}" {% if active %}aria-current="page"{% endif %}>
+    <i class="bi {{ icon }}"></i>
+    <span>{{ label }}</span>
+    {% if count %}<span class="nav-count">{{ count }}</span>{% endif %}
+  </a>
+{% endmacro %}
+
+{# Coloured pill for any status or priority, e.g. status_badge('In Progress'). #}
+{% macro status_badge(value) %}
+  <span class="status-badge status-{{ value|slug }}">{{ value|capitalize if value.islower() else value }}</span>
+{% endmacro %}
+
+{% macro priority_badge(value) %}
+  <span class="priority-badge priority-{{ value|slug }}"><i class="bi bi-flag-fill"></i>{{ value }}</span>
+{% endmacro %}
+
+{# Friendly "nothing here yet" block. #}
+{% macro empty_state(icon, title, text, action_url=None, action_label=None) %}
+  <div class="empty-state">
+    <div class="empty-icon"><i class="bi {{ icon }}"></i></div>
+    <h6>{{ title }}</h6>
+    <p>{{ text }}</p>
+    {% if action_url %}<a href="{{ action_url }}" class="btn btn-primary btn-sm">{{ action_label }}</a>{% endif %}
+  </div>
+{% endmacro %}
+
+{% macro page_header(title, subtitle=None) %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">{{ title }}</h1>
+      {% if subtitle %}<p class="page-subtitle">{{ subtitle }}</p>{% endif %}
+    </div>
+    <div class="page-actions">{{ caller() if caller }}</div>
+  </div>
+{% endmacro %}
+
+{% macro complaint_code(id) %}CMP-{{ '%04d'|format(id) }}{% endmacro %}
+{% macro request_code(id) %}RCR-{{ '%04d'|format(id) }}{% endmacro %}
+{% macro college_code(id) %}CMR-{{ '%04d'|format(id) }}{% endmacro %}

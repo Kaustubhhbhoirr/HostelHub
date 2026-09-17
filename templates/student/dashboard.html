@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, priority_badge, empty_state, complaint_code %}
+{% block title %}Dashboard{% endblock %}
+{% block topbar_title %}Student Portal{% endblock %}
+
+{% block content %}
+{# ---------- Welcome banner with the student's allocation ---------- #}
+<div class="welcome-card mb-4">
+  <h2>{{ greeting }}, {{ g.user.name.split()[0] }} 👋</h2>
+  {% if allocation %}
+    <p>Here's what's happening with your hostel stay today.</p>
+    <div class="welcome-room">
+      <div><small>Block</small><strong>{{ allocation.block }}</strong></div>
+      <div><small>Floor</small><strong>{{ allocation.floor }}</strong></div>
+      <div><small>Room</small><strong>{{ allocation.block }}-{{ allocation.room_number }}</strong></div>
+      <div><small>Bed</small><strong>Bed {{ allocation.bed_number }}</strong></div>
+    </div>
+  {% else %}
+    <p>You have not been allocated a room yet. The hostel office will assign you a bed soon.</p>
+  {% endif %}
+</div>
+
+{# ---------- Stat cards ---------- #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-xl-3">
+    <a href="{{ url_for('complaints.student_list') }}" class="hh-card stat-card">
+      <div class="stat-icon tone-amber"><i class="bi bi-tools"></i></div>
+      <div><div class="stat-label">Active complaints</div><div class="stat-value">{{ stats.active_complaints }}</div></div>
+    </a>
+  </div>
+  <div class="col-6 col-xl-3">
+    <a href="{{ url_for('complaints.student_list', status='Resolved') }}" class="hh-card stat-card">
+      <div class="stat-icon tone-green"><i class="bi bi-check2-circle"></i></div>
+      <div><div class="stat-label">Resolved issues</div><div class="stat-value">{{ stats.resolved_complaints }}</div></div>
+    </a>
+  </div>
+  <div class="col-6 col-xl-3">
+    <a href="{{ url_for('requests.student_list') }}" class="hh-card stat-card">
+      <div class="stat-icon tone-indigo"><i class="bi bi-arrow-left-right"></i></div>
+      <div><div class="stat-label">Pending requests</div><div class="stat-value">{{ stats.pending_requests }}</div></div>
+    </a>
+  </div>
+  <div class="col-6 col-xl-3">
+    <a href="{{ url_for('student.my_room') }}" class="hh-card stat-card">
+      <div class="stat-icon tone-blue"><i class="bi bi-people"></i></div>
+      <div><div class="stat-label">Roommates</div><div class="stat-value">{{ stats.roommates }}</div></div>
+    </a>
+  </div>
+</div>
+
+{# ---------- Quick actions ---------- #}
+<h6 class="small-caps mb-3">Quick actions</h6>
+<div class="row g-3 mb-4">
+  {% set actions = [
+    ('complaints.student_new', 'bi-exclamation-triangle', 'tone-red', 'Report an Issue', 'Fan, light, plumbing…'),
+    ('student.my_room', 'bi-door-open', 'tone-blue', 'My Room', 'Bed and roommates'),
+    ('requests.student_new', 'bi-arrow-left-right', 'tone-indigo', 'Request Room Change', 'Ask the warden to move'),
+    ('complaints.student_list', 'bi-card-checklist', 'tone-green', 'My Complaints', 'Track status updates'),
+  ] %}
+  {% for endpoint, icon, tone, title, text in actions %}
+    <div class="col-sm-6 col-xl-3">
+      <a href="{{ url_for(endpoint) }}" class="quick-action">
+        <div class="stat-icon {{ tone }}"><i class="bi {{ icon }}"></i></div>
+        <div><div class="qa-title">{{ title }}</div><div class="qa-text">{{ text }}</div></div>
+        <i class="bi bi-chevron-right ms-auto text-muted"></i>
+      </a>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="row g-3">
+  {# ---------- Recent complaints ---------- #}
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header">
+        <h5 class="card-title">Recent complaints</h5>
+        <a href="{{ url_for('complaints.student_list') }}" class="card-link-more">View all</a>
+      </div>
+      {% if recent_complaints %}
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead><tr><th>Complaint</th><th>Priority</th><th>Status</th><th>Updated</th></tr></thead>
+            <tbody>
+              {% for c in recent_complaints %}
+                <tr data-href="{{ url_for('complaints.student_detail', complaint_id=c.id) }}">
+                  <td><div class="cell-title">{{ c.category }}</div><div class="cell-sub">{{ complaint_code(c.id) }}</div></td>
+                  <td>{{ priority_badge(c.priority) }}</td>
+                  <td>{{ status_badge(c.status) }}</td>
+                  <td class="text-muted small">{{ c.updated_at|timeago }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        {{ empty_state('bi-emoji-smile', 'No complaints yet', 'Everything working fine? If something breaks, report it here.', url_for('complaints.student_new'), 'Report an issue') }}
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- Recent notifications ---------- #}
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header">
+        <h5 class="card-title">Notifications</h5>
+        <a href="{{ url_for('account.notifications') }}" class="card-link-more">View all</a>
+      </div>
+      {% for n in recent_notifications %}
+        <a class="notif-item {{ 'unread' if not n.is_read }}" href="{{ url_for('account.open_notification', notification_id=n.id) }}">
+          <span class="notif-icon notif-{{ n.type }}"><i class="bi {{ {'complaint':'bi-tools','room_request':'bi-arrow-left-right','college':'bi-bank','allocation':'bi-door-open'}.get(n.type, 'bi-info-circle') }}"></i></span>
+          <span class="flex-grow-1 min-w-0">
+            <span class="notif-title">{{ n.title }}</span>
+            <span class="notif-text">{{ n.message }}</span>
+            <span class="notif-time">{{ n.created_at|timeago }}</span>
+          </span>
+        </a>
+      {% else %}
+        {{ empty_state('bi-bell', 'No notifications', 'Updates about your complaints and requests will appear here.') }}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

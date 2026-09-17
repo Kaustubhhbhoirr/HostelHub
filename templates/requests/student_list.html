@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, empty_state, request_code %}
+{% block title %}Room Change{% endblock %}
+{% block topbar_title %}Student Portal{% endblock %}
+
+{% block content %}
+{% call page_header('Room change requests', 'Ask the warden to move you to another room or bed.') %}
+  {% if allocation and not has_pending %}
+    <a href="{{ url_for('requests.student_new') }}" class="btn btn-primary"><i class="bi bi-plus-lg me-2"></i>New request</a>
+  {% endif %}
+{% endcall %}
+
+{% if has_pending %}
+  <div class="alert alert-info"><i class="bi bi-hourglass-split me-2"></i>You have a pending request. You can create a new one after the warden decides or if you cancel it.</div>
+{% endif %}
+
+{% for r in room_requests %}
+  <div class="card request-card mb-3">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
+      <div>
+        <div class="d-flex align-items-center gap-2">
+          <span class="fw-bold">{{ request_code(r.id) }}</span>
+          {{ status_badge(r.status) }}
+        </div>
+        <div class="text-muted small mt-1">Submitted {{ r.created_at|datetime }}{% if r.updated_at != r.created_at %} · updated {{ r.updated_at|timeago }}{% endif %}</div>
+      </div>
+      {% if r.status == 'Pending' %}
+        <form method="post" action="{{ url_for('requests.student_cancel', request_id=r.id) }}"
+              data-confirm="Cancel this room change request?" data-confirm-button="Cancel request">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-white text-danger"><i class="bi bi-x-circle me-1"></i>Cancel request</button>
+        </form>
+      {% endif %}
+    </div>
+
+    <div class="move-visual mb-3">
+      <div class="move-box"><small>From</small>{{ r.current_block }}-{{ r.current_room_number }} · Bed {{ r.current_bed_number }}</div>
+      <i class="bi bi-arrow-right move-arrow"></i>
+      {% if r.status == 'Approved' and r.assigned_block %}
+        <div class="move-box" style="border-color:#86efac;background:#f0fdf4;"><small>Moved to</small>{{ r.assigned_block }}-{{ r.assigned_room_number }} · Bed {{ r.assigned_bed_number }}</div>
+      {% elif r.requested_block %}
+        <div class="move-box"><small>Preferred</small>{{ r.requested_block }}-{{ r.requested_room_number }} · Bed {{ r.requested_bed_number }}</div>
+      {% else %}
+        <div class="move-box"><small>Preferred</small>Any available bed</div>
+      {% endif %}
+    </div>
+
+    <div class="fw-semibold small">{{ r.reason }}</div>
+    {% if r.details %}<p class="text-muted small mb-0">{{ r.details }}</p>{% endif %}
+    {% if r.warden_remarks %}
+      <div class="remark-box mt-3"><span class="small-caps d-block mb-1">Warden remarks</span>{{ r.warden_remarks }}</div>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="card">
+    {% if allocation %}
+      {{ empty_state('bi-arrow-left-right', 'No requests yet', 'Need to move to another room? Send a request and the warden will review it.', url_for('requests.student_new'), 'Request a room change') }}
+    {% else %}
+      {{ empty_state('bi-door-closed', 'No room allocated', 'You can request a room change once you have been allocated a bed.') }}
+    {% endif %}
+  </div>
+{% endfor %}
+{% endblock %}
