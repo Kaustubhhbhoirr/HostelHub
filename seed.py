@@ -18,12 +18,12 @@ than hundreds of hand-written INSERT statements.
 
 import random
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from werkzeug.security import generate_password_hash
 
 from config import Config, DEPARTMENTS
-from database import connect, create_tables, insert, run
+from database import connect, create_tables, insert, local_now, run
 
 STUDENT_PASSWORD = "Student@123"
 WARDEN_PASSWORD = "Warden@123"
@@ -58,7 +58,7 @@ DEPARTMENT_CODES = {
 
 def ago(days=0, hours=0):
     """Return a date-time text for some time in the past."""
-    moment = datetime.now() - timedelta(days=days, hours=hours)
+    moment = local_now() - timedelta(days=days, hours=hours)
     return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 

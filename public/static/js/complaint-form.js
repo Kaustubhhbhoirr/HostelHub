@@ -10,7 +10,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const form = document.getElementById("complaintForm");
   if (!form) return;
 
-  const MAX_SIZE = 5 * 1024 * 1024; // 5 MB, same limit as MAX_CONTENT_LENGTH in config.py
+  const MAX_SIZE = 4 * 1024 * 1024; // 4 MB, same limit as MAX_CONTENT_LENGTH in config.py
   const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
   const fileInput = document.getElementById("image");
@@ -44,7 +44,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     if (file.size > MAX_SIZE) {
       clearImage();
-      return showImageError("This image is larger than 5 MB. Please choose a smaller one.");
+      return showImageError("This image is larger than 4 MB. Please choose a smaller one.");
     }
 
     // FileReader turns the local file into a data URL the <img> can display.

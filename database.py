@@ -30,7 +30,7 @@ close it automatically when the request ends.
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from flask import current_app, g
 
@@ -177,12 +177,22 @@ def execute(sql, params=()):
     return None
 
 
+# The hostel is in India. Cloud servers (like Vercel's) usually run on UTC time,
+# so we always convert to Indian Standard Time (UTC + 5:30, no daylight saving).
+INDIA_TIME = timezone(timedelta(hours=5, minutes=30), "IST")
+
+
+def local_now():
+    """Current date-time in India, without timezone info (matches the stored text)."""
+    return datetime.now(INDIA_TIME).replace(tzinfo=None)
+
+
 def now_str():
-    """Current local date-time as text, e.g. '2026-09-17 15:20:00'.
+    """Current India date-time as text, e.g. '2026-09-17 15:20:00'.
 
     SQLite has no real DATETIME type, so we store dates as sortable text in both engines.
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return local_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def init_app(app):

@@ -57,8 +57,9 @@ class Config:
     # Either way, photos are only sent through a route that first checks who is
     # asking (see complaint_image in routes/complaints.py).
 
-    # Flask rejects any request body bigger than 5 MB (returns error 413).
-    MAX_CONTENT_LENGTH = 5 * 1024 * 1024
+    # Flask rejects any request body bigger than 4 MB (returns error 413).
+    # Vercel refuses request bodies over 4.5 MB, so the limit stays below that.
+    MAX_CONTENT_LENGTH = 4 * 1024 * 1024
 
     # Session cookie hardening: JavaScript cannot read the cookie, and modern
     # browsers do not send it with most cross-site POST requests. This is only an

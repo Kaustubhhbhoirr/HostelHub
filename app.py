@@ -19,7 +19,7 @@ from flask import Flask, g, redirect, render_template, url_for
 
 import database
 from config import Config, OPEN_COMPLAINT_STATUSES, check_production_settings
-from database import query_all, query_one
+from database import local_now, query_all, query_one
 from routes.account import account_bp
 from routes.auth import auth_bp, home_url_for
 from routes.college import college_bp
@@ -30,7 +30,11 @@ from routes.student import student_bp
 from routes.warden import warden_bp
 from seed import seed_database
 
-app = Flask(__name__)
+# Static files (CSS, JavaScript, logo) live in public/static/.
+# - On Vercel, everything inside public/ is served directly by Vercel's CDN,
+#   so /static/css/style.css never has to go through Python.
+# - Locally, Flask serves the same folder at the same /static/... URLs.
+app = Flask(__name__, static_folder="public/static", static_url_path="/static")
 app.config.from_object(Config)
 
 # Stop immediately with a clear message instead of running production unsafely
@@ -82,7 +86,7 @@ def time_ago(value):
     moment = parse_datetime(value)
     if moment is None:
         return "—"
-    seconds = int((datetime.now() - moment).total_seconds())
+    seconds = int((local_now() - moment).total_seconds())
     if seconds < 60:
         return "just now"
     # (limit in seconds, unit size in seconds, unit name)
@@ -147,7 +151,7 @@ ERROR_MESSAGES = {
     400: ("Form expired", "This form could not be verified. Go back, refresh the page and try again."),
     403: ("Access denied", "You do not have permission to open this page."),
     404: ("Page not found", "The page or record you are looking for does not exist."),
-    413: ("File too large", "Uploaded files must be smaller than 5 MB."),
+    413: ("File too large", "Uploaded files must be smaller than 4 MB."),
     500: ("Something went wrong", "An unexpected error occurred. Please try again."),
 }
 
