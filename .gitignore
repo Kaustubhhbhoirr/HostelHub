@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------
+# HostelHub .gitignore
+# Never commit: virtual environments, databases, secrets, uploads
+# ---------------------------------------------------------------
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local databases (recreate with: python seed.py)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Secrets / environment files (only .env.example is committed)
+.env
+.env.*
+!.env.example
+
+# Uploaded complaint photos are private student data.
+# Keep only the empty folder.
+uploads/**
+!uploads/
+!uploads/complaints/
+!uploads/complaints/.gitkeep
+
+# Vercel CLI local project link
+.vercel/
+
+# Personal implementation notebook (kept locally, not published)
+bank.md
+
+# Editors, IDEs and tools
+.vscode/
+.idea/
+*.swp
+.claude/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
