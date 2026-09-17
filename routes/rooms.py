@@ -9,12 +9,10 @@ Every colour on the map comes from beds.status in the database.
 Nothing about occupancy is hard-coded in HTML or JavaScript.
 """
 
-import sqlite3
-
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
 from config import MANUAL_BED_STATUSES, ROOM_STATUSES
-from database import execute, get_db, query_all, query_one
+from database import DatabaseError, IntegrityError, execute, get_db, query_all, query_one
 from helpers import (InvalidAllocationError, allocate_bed, bed_label, cancel_pending_room_requests,
                      create_notification, get_bed, vacate_bed)
 from routes.auth import warden_required
@@ -125,7 +123,7 @@ def room_new(room_id=None):
         except ValueError as error:          # a business rule was broken (see update_room)
             db.rollback()
             flash(str(error), "danger")
-        except sqlite3.IntegrityError:        # UNIQUE (block, room_number)
+        except IntegrityError:        # UNIQUE (block, room_number)
             db.rollback()
             flash(f"Room {data['block']}-{data['room_number']} already exists.", "danger")
 
@@ -173,7 +171,7 @@ def update_room(room, data):
         for bed in beds_to_remove:
             try:
                 execute("DELETE FROM beds WHERE id = ?", (bed["id"],))
-            except sqlite3.IntegrityError:
+            except IntegrityError:
                 # Old allocations or requests still point to this bed (foreign key), so it
                 # cannot be removed. The route rolls back the whole edit.
                 raise ValueError(f"Bed {bed['bed_number']} has allocation history and cannot be removed. "
@@ -204,7 +202,7 @@ def room_delete(room_id):
         execute("DELETE FROM rooms WHERE id = ?", (room_id,))
         db.commit()
         flash(f"Room {label} deleted.", "success")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         # Allocations or complaints still reference this room's beds.
         db.rollback()
         flash(f"Room {label} has allocation or complaint history, so it cannot be deleted. "
@@ -312,7 +310,7 @@ def bed_allocate(bed_id):
     except InvalidAllocationError as error:
         db.rollback()
         flash(str(error), "danger")
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         # The partial UNIQUE index stopped a double allocation.
         db.rollback()
         flash("That bed or student was just allocated by someone else. Please refresh and try again.", "danger")
@@ -343,7 +341,7 @@ def bed_vacate(bed_id):
                             "allocation", url_for("student.my_room"))
         db.commit()
         flash(f"{occupant['name']} was removed from {bed_label(bed)}. The bed is now available.", "success")
-    except (InvalidAllocationError, sqlite3.Error):
+    except (InvalidAllocationError, *DatabaseError):   # * unpacks the tuple of database errors
         db.rollback()
         flash("Could not vacate the bed. Please try again.", "danger")
     return back_to_map(bed)

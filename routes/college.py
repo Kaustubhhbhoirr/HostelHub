@@ -7,12 +7,10 @@ college's response (status + college remarks) when it arrives.
 Status flow:  Draft -> Sent to College -> Under Review -> Approved / Rejected -> Completed
 """
 
-import sqlite3
-
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 
 from config import COLLEGE_REQUEST_STATUSES, COLLEGE_REQUEST_TYPES, COMPLAINT_PRIORITIES
-from database import execute, get_db, now_str, query_all, query_one
+from database import DatabaseError, execute, get_db, now_str, query_all, query_one
 from helpers import create_notification
 from routes.auth import warden_required
 
@@ -158,7 +156,7 @@ def request_new(request_id=None):
                 db.commit()
                 flash("Request sent to college." if send_now else "Request saved as draft.", "success")
                 return redirect(url_for("college.request_detail", request_id=request_id))
-            except sqlite3.Error:
+            except DatabaseError:
                 db.rollback()
                 flash("The request could not be saved. Please try again.", "danger")
 
@@ -202,7 +200,7 @@ def request_status(request_id):
             notify_student_about_escalation(college_request["complaint_id"])
         db.commit()
         flash(f"Request status updated to {new_status}.", "success")
-    except sqlite3.Error:
+    except DatabaseError:
         db.rollback()
         flash("The status could not be updated. Please try again.", "danger")
     return redirect(url_for("college.request_detail", request_id=request_id))

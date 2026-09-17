@@ -11,14 +11,12 @@ Each status change is saved in the complaints table and creates a
 notification for the student.
 """
 
-import sqlite3
-
 from flask import (Blueprint, abort, current_app, flash, g, redirect, render_template, request,
                    send_from_directory, url_for)
 
 from config import (COMPLAINT_CATEGORIES, COMPLAINT_NEXT_STATUSES, COMPLAINT_PRIORITIES,
                     COMPLAINT_STATUSES, OPEN_COMPLAINT_STATUSES)
-from database import execute, get_db, now_str, query_all, query_one
+from database import DatabaseError, execute, get_db, now_str, query_all, query_one
 from helpers import (complaint_image_exists, create_notification, delete_complaint_image,
                      get_active_allocation, notify_wardens, save_complaint_image)
 from routes.auth import login_required, student_required, warden_required
@@ -127,7 +125,7 @@ def student_new():
                 db.commit()
                 flash("Maintenance complaint submitted successfully.", "success")
                 return redirect(url_for("complaints.student_detail", complaint_id=complaint_id))
-            except sqlite3.Error:
+            except DatabaseError:
                 db.rollback()
                 delete_complaint_image(image_path)   # don't leave an unused file behind
                 flash("Your complaint could not be saved. Please try again.", "danger")
@@ -183,8 +181,9 @@ def warden_list():
 
     conditions, params = [], []
     if filters["q"]:
-        conditions.append("(users.name LIKE ? OR complaints.description LIKE ? OR rooms.room_number LIKE ?)")
-        like = f"%{filters['q']}%"
+        conditions.append("(LOWER(users.name) LIKE ? OR LOWER(complaints.description) LIKE ? "
+                          "OR LOWER(rooms.room_number) LIKE ?)")
+        like = f"%{filters['q'].lower()}%"
         params.extend([like, like, like])
     if filters["status"] == "open":
         conditions.append(f"complaints.status IN ({', '.join('?' for _ in OPEN_COMPLAINT_STATUSES)})")
@@ -290,7 +289,7 @@ def warden_update(complaint_id):
                             url_for("complaints.student_detail", complaint_id=complaint_id))
         db.commit()
         flash(f"Complaint {code} updated to {new_status}.", "success")
-    except sqlite3.Error:
+    except DatabaseError:
         db.rollback()
         flash("The complaint could not be updated. Please try again.", "danger")
     return redirect(detail_url)

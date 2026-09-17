@@ -5,12 +5,10 @@ Both students and wardens use these routes. Every query filters by
 g.user["id"], so a user can only ever see or change their OWN records.
 """
 
-import sqlite3
-
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from database import execute, get_db, query_all, query_one
+from database import DatabaseError, execute, get_db, query_all, query_one
 from helpers import get_active_allocation
 from routes.auth import login_required
 
@@ -126,7 +124,7 @@ def change_password():
                 (generate_password_hash(new_password), g.user["id"]))
         get_db().commit()
         flash("Password changed successfully.", "success")
-    except sqlite3.Error:
+    except DatabaseError:
         get_db().rollback()
         flash("Could not change the password. Please try again.", "danger")
     return redirect(url_for("account.profile"))

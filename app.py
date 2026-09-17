@@ -40,8 +40,10 @@ if config_problems:
     raise RuntimeError("HostelHub production configuration error: " + " ".join(config_problems))
 database.init_app(app)
 
-# First run: no database file yet -> build it with demo data.
-if not os.path.exists(app.config["DATABASE"]):
+# First LOCAL run: no SQLite file yet -> build it with demo data.
+# A hosted PostgreSQL database is NEVER seeded automatically (that would wipe real
+# data on every start); it is set up once with `python seed.py` instead.
+if not app.config["DATABASE_URL"] and not os.path.exists(app.config["DATABASE"]):
     seed_database(app.config["DATABASE"])
 
 # Each blueprint is a group of related routes kept in its own file.

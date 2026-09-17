@@ -2,7 +2,10 @@
 tests/base.py — Shared setup for every HostelHub test.
 
 Each test:
-  1. builds a brand-new temporary database with seed.py (the demo database is never touched)
+  1. builds a brand-new database with seed.py (the demo database is never touched)
+       - by default a temporary SQLite file
+       - or, if HOSTELHUB_TEST_DATABASE_URL is set, a PostgreSQL TEST database
+         (it is wiped by every test, so NEVER point it at real data)
   2. uses Flask's test client to send requests without starting a server
   3. finishes by running check_database.find_problems(), so every workflow
      test also proves the data is still consistent afterwards
@@ -10,15 +13,21 @@ Each test:
 
 import os
 import shutil
-import sqlite3
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Tests must never use real deployment settings from your terminal (for example a
+# production DATABASE_URL). Blank them out BEFORE the app is imported.
+TEST_DATABASE_URL = os.environ.get("HOSTELHUB_TEST_DATABASE_URL", "").strip()
+for variable in ("DATABASE_URL", "VERCEL", "HOSTELHUB_ENV", "HOSTELHUB_DEBUG"):
+    os.environ[variable] = ""
+
 from app import app  # noqa: E402
 from check_database import find_problems  # noqa: E402
+from database import connect, run  # noqa: E402
 from seed import seed_database  # noqa: E402
 
 # Smallest valid PNG file (1x1 pixel), used to test image upload.
@@ -33,14 +42,14 @@ class HostelHubTestCase(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        seed_database(self.db_path)
-        app.config.update(TESTING=True, DATABASE=self.db_path,
+        seed_database(self.db_path, database_url=TEST_DATABASE_URL)
+        app.config.update(TESTING=True, DATABASE=self.db_path, DATABASE_URL=TEST_DATABASE_URL,
                           UPLOAD_FOLDER=os.path.join(self.temp_dir, "uploads"))
         self.client = app.test_client()
 
     def tearDown(self):
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.connect()
             problems = find_problems(conn)
             conn.close()
             self.assertEqual(problems, [], "database became inconsistent during this test")
@@ -48,11 +57,13 @@ class HostelHubTestCase(unittest.TestCase):
             shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     # ---------------- database helpers ----------------
+    def connect(self):
+        return connect(TEST_DATABASE_URL, self.db_path)
+
     def all(self, sql, params=()):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = self.connect()
         try:
-            return conn.execute(sql, params).fetchall()
+            return run(conn, sql, params).fetchall()
         finally:
             conn.close()
 
@@ -61,13 +72,14 @@ class HostelHubTestCase(unittest.TestCase):
         return rows[0] if rows else None
 
     def count(self, sql, params=()):
-        return self.all(sql, params)[0][0]
+        """Run a query that selects one number, e.g. SELECT COUNT(*) AS n ..."""
+        row = self.one(sql, params)
+        return list(dict(row).values())[0]
 
     def run_sql(self, sql, params=()):
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA foreign_keys = ON")
+        conn = self.connect()
         try:
-            conn.execute(sql, params)
+            run(conn, sql, params)
             conn.commit()
         finally:
             conn.close()

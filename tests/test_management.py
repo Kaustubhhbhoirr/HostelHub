@@ -263,9 +263,9 @@ class SeedDataTests(HostelHubTestCase):
         self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'student'"), 72)
         self.assertEqual(len(self.unallocated_student_ids()), 5)
         self.assertEqual(self.count("SELECT COUNT(*) FROM room_change_requests WHERE status = 'Pending'"), 2)
-        statuses = {row[0] for row in self.all("SELECT DISTINCT status FROM complaints")}
+        statuses = {row["status"] for row in self.all("SELECT DISTINCT status FROM complaints")}
         self.assertEqual(statuses, {"Submitted", "Acknowledged", "In Progress", "Resolved", "Rejected"})
-        bed_statuses = {row[0] for row in self.all("SELECT DISTINCT status FROM beds")}
+        bed_statuses = {row["status"] for row in self.all("SELECT DISTINCT status FROM beds")}
         self.assertEqual(bed_statuses, {"available", "occupied", "reserved", "maintenance", "unavailable"})
         self.assertTrue(self.count("SELECT COUNT(*) FROM users WHERE email NOT LIKE '%@mes.ac.in'") == 0)
 

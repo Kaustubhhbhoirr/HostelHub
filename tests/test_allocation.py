@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 from base import HostelHubTestCase
+from database import IntegrityError
 
 
 class AllocationTests(HostelHubTestCase):
@@ -114,10 +115,10 @@ class AllocationTests(HostelHubTestCase):
         """The partial UNIQUE indexes work even if the Python checks were skipped."""
         occupied_bed = self.bed_with_status("occupied")
         waiting = self.unallocated_student_ids()[0]
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(IntegrityError):
             self.run_sql("INSERT INTO allocations (student_id, bed_id, allocated_at, status) "
                          "VALUES (?, ?, '2026-01-01 00:00:00', 'active')", (waiting, occupied_bed))
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(IntegrityError):
             self.run_sql("INSERT INTO allocations (student_id, bed_id, allocated_at, status) "
                          "VALUES (?, ?, '2026-01-01 00:00:00', 'active')", (self.demo_student_id(), self.free_bed_id()))
         # Ended rows are history, so many are allowed.
@@ -125,14 +126,14 @@ class AllocationTests(HostelHubTestCase):
                      "VALUES (?, ?, '2025-01-01 00:00:00', '2025-06-01 00:00:00', 'ended')", (waiting, occupied_bed))
 
     def test_foreign_keys_and_check_constraints(self):
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(IntegrityError):
             self.run_sql("INSERT INTO allocations (student_id, bed_id, allocated_at) VALUES (99999, 1, 'now')")
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(IntegrityError):
             self.run_sql("INSERT INTO complaints (student_id, room_id, category, description, created_at, updated_at) "
                          "VALUES (2, 99999, 'Fan', 'x', 'now', 'now')")
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(IntegrityError):
             self.run_sql("UPDATE beds SET status = 'broken' WHERE id = 1")
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(IntegrityError):
             self.run_sql("UPDATE users SET role = 'admin' WHERE id = 2")
 
 

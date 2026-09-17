@@ -8,13 +8,11 @@ CRUD on the users table:
     DELETE -> student_delete()   DELETE FROM users
 """
 
-import sqlite3
-
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from werkzeug.security import generate_password_hash
 
 from config import ALLOWED_EMAIL_DOMAIN, DEPARTMENTS, OPEN_COMPLAINT_STATUSES
-from database import execute, get_db, now_str, query_all, query_one
+from database import DatabaseError, IntegrityError, execute, get_db, now_str, query_all, query_one
 from helpers import (InvalidAllocationError, cancel_pending_room_requests,
                      get_active_allocation, vacate_bed)
 from routes.auth import warden_required
@@ -144,8 +142,9 @@ def student_list():
     conditions = ["users.role = 'student'"]
     params = []
     if search:
-        conditions.append("(users.name LIKE ? OR users.email LIKE ? OR users.student_id LIKE ?)")
-        like = f"%{search}%"
+        # LOWER() on both sides makes the search ignore capital letters in SQLite AND PostgreSQL.
+        conditions.append("(LOWER(users.name) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(users.student_id) LIKE ?)")
+        like = f"%{search.lower()}%"
         params.extend([like, like, like])
     if block:
         conditions.append("rooms.block = ?")
@@ -236,11 +235,12 @@ def read_student_form(is_new):
 
 def friendly_integrity_message(error):
     """Turn a UNIQUE constraint error into a message a user understands."""
+    # SQLite says "users.student_id", PostgreSQL says "users_student_id_key".
     text = str(error)
-    if "users.email" in text:
-        return "Another account already uses this email address."
-    if "users.student_id" in text:
+    if "student_id" in text:
         return "Another student already has this student ID."
+    if "email" in text:
+        return "Another account already uses this email address."
     return "This change conflicts with existing records."
 
 
@@ -266,7 +266,7 @@ def student_new():
                 get_db().commit()
                 flash(f"Student {data['name']} added. You can now allocate a bed.", "success")
                 return redirect(url_for("warden.student_detail", student_id=new_id))
-            except sqlite3.IntegrityError as error:
+            except IntegrityError as error:
                 get_db().rollback()
                 flash(friendly_integrity_message(error), "danger")
 
@@ -277,7 +277,7 @@ def student_new():
 @warden_required
 def student_edit(student_id):
     student = get_student_or_404(student_id)
-    form_values = dict(student)   # sqlite3.Row -> normal dictionary
+    form_values = dict(student)   # database row -> normal dictionary
 
     if request.method == "POST":
         data, errors = read_student_form(is_new=False)
@@ -300,7 +300,7 @@ def student_edit(student_id):
                 get_db().commit()
                 flash("Student details updated.", "success")
                 return redirect(url_for("warden.student_detail", student_id=student_id))
-            except sqlite3.IntegrityError as error:
+            except IntegrityError as error:
                 get_db().rollback()
                 flash(friendly_integrity_message(error), "danger")
 
@@ -330,7 +330,7 @@ def student_toggle_active(student_id):
             message = f"{student['name']} has been reactivated."
         db.commit()
         flash(message, "success")
-    except (InvalidAllocationError, sqlite3.Error):
+    except (InvalidAllocationError, *DatabaseError):   # * unpacks the tuple of database errors
         db.rollback()
         flash("Could not change the account status. Please try again.", "danger")
     return redirect(url_for("warden.student_detail", student_id=student_id))
@@ -349,13 +349,13 @@ def student_delete(student_id):
         db.commit()
         flash(f"Student {student['name']} was deleted.", "success")
         return redirect(url_for("warden.student_list"))
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         # Complaints and room requests point to this student (foreign keys),
         # so SQLite refuses the DELETE. Keeping history is safer anyway.
         db.rollback()
         flash("This student has complaint or request history and cannot be deleted. Deactivate the account instead.",
               "warning")
-    except (InvalidAllocationError, sqlite3.Error):
+    except (InvalidAllocationError, *DatabaseError):   # * unpacks the tuple of database errors
         db.rollback()
         flash("Could not delete the student. Please try again.", "danger")
     return redirect(url_for("warden.student_detail", student_id=student_id))

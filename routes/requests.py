@@ -9,12 +9,10 @@ Students can never move themselves. They create a request:
     Student cancels  ->  Cancelled (reserved bed becomes available again)
 """
 
-import sqlite3
-
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 
 from config import ROOM_CHANGE_REASONS, ROOM_CHANGE_STATUSES
-from database import execute, get_db, now_str, query_all, query_one
+from database import DatabaseError, execute, get_db, now_str, query_all, query_one
 from helpers import (InvalidAllocationError, bed_label, create_notification, get_active_allocation,
                      get_bed, move_student, notify_wardens, release_reserved_bed)
 from routes.auth import student_required, warden_required
@@ -144,7 +142,7 @@ def student_new():
                 db.commit()
                 flash("Room change request submitted.", "success")
                 return redirect(url_for("requests.student_list"))
-            except sqlite3.Error:
+            except DatabaseError:
                 db.rollback()
                 flash("Your request could not be saved. Please try again.", "danger")
 
@@ -246,7 +244,7 @@ def warden_decide(request_id):
                                 "room_request", url_for("requests.student_list"))
             db.commit()
             flash("Room change request rejected.", "success")
-        except sqlite3.Error:
+        except DatabaseError:
             db.rollback()
             flash("The request could not be updated. Please try again.", "danger")
         return redirect(detail_url)
@@ -285,7 +283,7 @@ def warden_decide(request_id):
     except InvalidAllocationError as error:
         db.rollback()  # undo everything, including the released reservation
         flash(str(error), "danger")
-    except sqlite3.Error:
+    except DatabaseError:
         db.rollback()
         flash("The room change could not be completed. No changes were saved.", "danger")
     return redirect(detail_url)

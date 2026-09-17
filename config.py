@@ -38,7 +38,11 @@ class Config:
     # locally and only when explicitly requested with HOSTELHUB_DEBUG=1.
     DEBUG = os.environ.get("HOSTELHUB_DEBUG") == "1" and not IS_PRODUCTION
 
-    # SQLite database file and the SQL file that creates the tables.
+    # PostgreSQL connection string for deployment, e.g. postgresql://user:password@host:6543/postgres
+    # Empty (the default) means: use the local SQLite file below.
+    DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+    # SQLite database file (local development) and the SQL file that creates the tables.
     DATABASE = os.path.join(BASE_DIR, "database", "hostelhub.db")
     SCHEMA_FILE = os.path.join(BASE_DIR, "database", "schema.sql")
 
@@ -71,6 +75,9 @@ def check_production_settings(settings):
             problems.append("HOSTELHUB_SECRET_KEY must be set to a random value of at least 32 characters.")
         if settings["DEBUG"]:
             problems.append("Debug mode must be off in production.")
+        # Vercel's file system is temporary, so a SQLite file would lose data.
+        if not settings["DATABASE_URL"].startswith(("postgres://", "postgresql://")):
+            problems.append("DATABASE_URL must point to a hosted PostgreSQL database.")
     return problems
 
 
