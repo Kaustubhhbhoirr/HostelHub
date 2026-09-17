@@ -161,7 +161,7 @@ class RoomChangeTests(HostelHubTestCase):
         self.assertEqual(self.bed_status(target), "reserved")           # yellow on the map
 
         self.login_warden()
-        page = self.client.get(f"/warden/rooms/map?block=A&floor=1").get_data(as_text=True)
+        page = self.client.get("/warden/rooms/map?block=A&floor=1").get_data(as_text=True)
         self.assertRegex(page, rf'class="bed bed-reserved"\s+data-bed-id="{target}"')
         self.logout()
 
