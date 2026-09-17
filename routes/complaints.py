@@ -11,8 +11,7 @@ Each status change is saved in the complaints table and creates a
 notification for the student.
 """
 
-from flask import (Blueprint, abort, current_app, flash, g, redirect, render_template, request,
-                   send_from_directory, url_for)
+from flask import Blueprint, Response, abort, flash, g, redirect, render_template, request, url_for
 
 from config import (COMPLAINT_CATEGORIES, COMPLAINT_NEXT_STATUSES, COMPLAINT_PRIORITIES,
                     COMPLAINT_STATUSES, OPEN_COMPLAINT_STATUSES)
@@ -20,8 +19,13 @@ from database import DatabaseError, execute, get_db, now_str, query_all, query_o
 from helpers import (complaint_image_exists, create_notification, delete_complaint_image,
                      get_active_allocation, notify_wardens, save_complaint_image)
 from routes.auth import login_required, student_required, warden_required
+from storage import read_file
 
 complaints_bp = Blueprint("complaints", __name__)
+
+# Content type sent to the browser for each allowed photo extension.
+IMAGE_MIME_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                    "gif": "image/gif", "webp": "image/webp"}
 
 
 def complaint_code(complaint_id):
@@ -150,7 +154,8 @@ def student_detail(complaint_id):
 def complaint_image(complaint_id):
     """Send a complaint photo, but only to someone allowed to see that complaint.
 
-    Photos are stored outside /static, so this route is the ONLY way to open them:
+    Photos are stored privately (local uploads folder or a private Supabase bucket),
+    so this route is the ONLY way to open them:
       - the student who reported the complaint may see it
       - a warden may see it
       - anyone else gets 404 (knowing or guessing the URL is not enough)
@@ -160,8 +165,16 @@ def complaint_image(complaint_id):
         abort(404)
     if g.user["role"] == "student" and complaint["student_id"] != g.user["id"]:
         abort(404)
-    # send_from_directory refuses paths like "../app.py" and returns 404 if the file is missing.
-    return send_from_directory(current_app.config["UPLOAD_FOLDER"], complaint["image_path"])
+    # read_file() refuses names like "../app.py" and returns None if the photo is missing.
+    photo = read_file(complaint["image_path"])
+    if photo is None:
+        abort(404)
+    extension = complaint["image_path"].rsplit(".", 1)[-1].lower()
+    response = Response(photo, mimetype=IMAGE_MIME_TYPES.get(extension, "application/octet-stream"))
+    # "private": browsers may cache it for this user, but shared caches (CDNs) must not.
+    response.headers["Cache-Control"] = "private, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 # ==================================================================

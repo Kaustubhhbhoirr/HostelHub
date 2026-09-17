@@ -46,10 +46,16 @@ class Config:
     DATABASE = os.path.join(BASE_DIR, "database", "hostelhub.db")
     SCHEMA_FILE = os.path.join(BASE_DIR, "database", "schema.sql")
 
-    # Complaint images are saved here and the database only stores the file name.
-    # This folder is deliberately NOT inside /static: images are sent through a
-    # route that first checks who is asking (see complaint_image in complaints.py).
+    # Complaint photos (the database only stores the generated file name).
+    # LOCAL: saved in this folder, deliberately NOT inside /static.
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads", "complaints")
+    # DEPLOYMENT: saved in a PRIVATE Supabase Storage bucket (see storage.py).
+    # Leave SUPABASE_URL empty to use the local folder.
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+    SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+    SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "").strip() or "complaint-photos"
+    # Either way, photos are only sent through a route that first checks who is
+    # asking (see complaint_image in routes/complaints.py).
 
     # Flask rejects any request body bigger than 5 MB (returns error 413).
     MAX_CONTENT_LENGTH = 5 * 1024 * 1024
@@ -78,6 +84,9 @@ def check_production_settings(settings):
         # Vercel's file system is temporary, so a SQLite file would lose data.
         if not settings["DATABASE_URL"].startswith(("postgres://", "postgresql://")):
             problems.append("DATABASE_URL must point to a hosted PostgreSQL database.")
+        # Photos saved in Vercel's temporary file system would disappear.
+        if not settings["SUPABASE_URL"].startswith("https://") or not settings["SUPABASE_SECRET_KEY"]:
+            problems.append("SUPABASE_URL (https://...) and SUPABASE_SECRET_KEY must be set for photo storage.")
     return problems
 
 

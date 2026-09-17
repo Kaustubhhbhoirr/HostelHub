@@ -12,11 +12,9 @@ commits once at the end. If anything fails, the route calls rollback() and
 the database goes back to how it was before (a "transaction").
 """
 
-import os
 import uuid
 
-from flask import current_app
-
+import storage
 from config import ALLOWED_IMAGE_EXTENSIONS
 from database import execute, now_str, query_all, query_one
 
@@ -197,7 +195,7 @@ IMAGE_SIGNATURES = (
 def has_image_signature(file):
     """Peek at the start of the uploaded file to check it really is an image."""
     header = file.stream.read(12)
-    file.stream.seek(0)   # rewind so file.save() still writes the whole file
+    file.stream.seek(0)   # rewind so the whole file is read again when it is stored
     is_webp = header[:4] == b"RIFF" and header[8:12] == b"WEBP"
     return is_webp or header.startswith(IMAGE_SIGNATURES)
 
@@ -218,34 +216,28 @@ def save_complaint_image(file):
             or not has_image_signature(file)):
         raise ValueError("Only PNG, JPG, JPEG, WEBP or GIF images can be uploaded.")
 
-    # We never use the user's own file name on disk. A random name avoids
-    # overwriting other files and blocks tricks like "../../app.py".
+    # We never use the user's own file name. A random name avoids overwriting
+    # other photos and blocks tricks like "../../app.py".
     extension = file.filename.rsplit(".", 1)[1].lower()
     new_filename = f"{uuid.uuid4().hex}.{extension}"
 
-    upload_folder = current_app.config["UPLOAD_FOLDER"]
-    os.makedirs(upload_folder, exist_ok=True)
+    # storage.py decides WHERE it goes: the local uploads folder, or the private
+    # Supabase bucket in deployment.
     try:
-        file.save(os.path.join(upload_folder, new_filename))
-    except OSError as error:
-        current_app.logger.error("Could not save upload: %s", error)
+        storage.save_file(new_filename, file.read(), file.mimetype)
+    except storage.StorageError:
         raise ValueError("The image could not be saved. Please try again.")
 
     # Only this short file name goes into the database, never the image bytes.
     return new_filename
 
 
-def complaint_image_path(filename):
-    """Full path of a stored complaint image on disk."""
-    return os.path.join(current_app.config["UPLOAD_FOLDER"], filename)
-
-
 def complaint_image_exists(filename):
-    """True if the complaint has an image AND the file is still on disk."""
-    return bool(filename) and os.path.isfile(complaint_image_path(filename))
+    """True if the complaint has a photo that can be shown."""
+    return storage.file_exists(filename)
 
 
 def delete_complaint_image(filename):
-    """Remove a saved image (used when the complaint itself could not be saved)."""
-    if complaint_image_exists(filename):
-        os.remove(complaint_image_path(filename))
+    """Remove a saved photo (used when the complaint itself could not be saved)."""
+    if filename:
+        storage.delete_file(filename)

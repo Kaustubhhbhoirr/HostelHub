@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Tests must never use real deployment settings from your terminal (for example a
 # production DATABASE_URL). Blank them out BEFORE the app is imported.
 TEST_DATABASE_URL = os.environ.get("HOSTELHUB_TEST_DATABASE_URL", "").strip()
-for variable in ("DATABASE_URL", "VERCEL", "HOSTELHUB_ENV", "HOSTELHUB_DEBUG"):
+for variable in ("DATABASE_URL", "VERCEL", "HOSTELHUB_ENV", "HOSTELHUB_DEBUG",
+                 "SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_BUCKET"):
     os.environ[variable] = ""
 
 from app import app  # noqa: E402
@@ -44,7 +45,8 @@ class HostelHubTestCase(unittest.TestCase):
         self.db_path = os.path.join(self.temp_dir, "test.db")
         seed_database(self.db_path, database_url=TEST_DATABASE_URL)
         app.config.update(TESTING=True, DATABASE=self.db_path, DATABASE_URL=TEST_DATABASE_URL,
-                          UPLOAD_FOLDER=os.path.join(self.temp_dir, "uploads"))
+                          UPLOAD_FOLDER=os.path.join(self.temp_dir, "uploads"),
+                          SUPABASE_URL="", SUPABASE_SECRET_KEY="", SUPABASE_BUCKET="complaint-photos")
         self.client = app.test_client()
 
     def tearDown(self):
