@@ -11,7 +11,7 @@ python -m unittest discover tests -v
 ```
 
 **Result (final audit): 69 tests, OK.** The suite was run several times, including twice in a row after the final code change.
-**Result (deployment preparation): 75 tests, OK on SQLite and 75 tests, OK on PostgreSQL.** See section 5.
+**Result (deployment preparation): 91 tests, OK on SQLite and 91 tests, OK on PostgreSQL.** See section 5.
 
 How the tests work:
 - `tests/base.py` builds a **fresh temporary database** for every test with `seed_database()`. The demo database is never touched.
@@ -129,12 +129,12 @@ Fixed during these checks: missing accessible labels on the student search, comp
 python -m unittest discover tests -v
 ```
 
-SQLite (default): **75 tests, OK**.
+SQLite (default): **91 tests, OK** (75 after the storage commit, 91 after the deployment configuration tests).
 
 To run the same suite against PostgreSQL, set `HOSTELHUB_TEST_DATABASE_URL` to an **empty test
 database** (every test wipes it), then run the same command.
 
-PostgreSQL 18 (a temporary local server): **75 tests, OK**. This includes the room-change rollback test,
+PostgreSQL 18 (a temporary local server): **91 tests, OK**. This includes the room-change rollback test,
 the database-level double-allocation test, CHECK and foreign-key violations, and case-insensitive search.
 
 New test file `tests/test_storage.py` (6 tests) starts a small fake Supabase Storage server and checks:
@@ -149,6 +149,16 @@ New test file `tests/test_storage.py` (6 tests) starts a small fake Supabase Sto
 | unsafe stored name | `../secret.png` is refused without contacting storage |
 
 The fake server follows the documented Supabase Storage endpoints. **It is not the real Supabase service.**
+
+New test file `tests/test_deployment_config.py` (16 tests):
+
+| Area | What it proves |
+|---|---|
+| `check_production_settings` | each unsafe setting is reported (demo/short secret, debug, missing or non-PostgreSQL `DATABASE_URL`, missing or non-https storage); a complete configuration passes; local needs nothing |
+| startup in a separate process | safe local defaults; on Vercel without settings the app refuses to start and names the variables; `HOSTELHUB_DEBUG=1` ignored in production; `Secure` cookie; `HOSTELHUB_ENV=production` behaves the same; no database connection or seeding at startup |
+| Vercel layout | `app.py` exports a Flask `app`; static files in `public/static`; old `static/` gone; `requirements.txt` has only Flask and psycopg; `.python-version`; 4 MB limit below Vercel's 4.5 MB; India time |
+| `.env.example` | lists the required names with no secret values |
+| Git hygiene | databases, `.env` files, uploads, `bank.md` and caches are ignored and none are tracked |
 
 ### 5.2 Seed and consistency check on PostgreSQL
 

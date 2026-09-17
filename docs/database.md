@@ -33,7 +33,7 @@ at once, and enforces the same constraints.
 | Dates | stored as text `YYYY-MM-DD HH:MM:SS` in India time | same | same |
 
 Everything else (CHECK constraints, UNIQUE, foreign keys, `JOIN`, `GROUP BY`, `CASE`) is identical SQL.
-All 75 automated tests pass on both engines (PostgreSQL 18 was used for testing).
+All 91 automated tests pass on both engines (PostgreSQL 18 was used for testing).
 
 Foreign keys are switched on for every SQLite connection (`PRAGMA foreign_keys = ON` in `database.connect()`),
 because SQLite ignores them by default.

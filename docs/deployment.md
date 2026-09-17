@@ -152,8 +152,8 @@ Work through this list on the live URL:
 
 | Item | Status |
 |---|---|
-| Local SQLite mode | Verified: 75 automated tests, seed, consistency check, browser checks |
-| PostgreSQL support | Verified against a local PostgreSQL 18 server: all 75 tests, seed and consistency check |
+| Local SQLite mode | Verified: 91 automated tests, seed, consistency check, browser checks |
+| PostgreSQL support | Verified against a local PostgreSQL 18 server: all 91 tests, seed and consistency check |
 | Production mode (`VERCEL=1`) with PostgreSQL | Verified locally with a real HTTP server: 24 end-to-end checks, Secure cookie, debug off |
 | Supabase Storage calls | Verified against a fake server that follows the documented API, **not** against real Supabase |
 | Vercel Flask configuration | Follows the current Vercel Flask documentation (zero-config `app.py`, `public/` for static files); **not deployed yet** |

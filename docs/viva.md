@@ -91,7 +91,7 @@ With SQL: `COUNT(*)`, `GROUP BY status`, `SUM(CASE WHEN …)`. Nothing is hard-c
 A column that must match a row in another table, e.g. `beds.room_id REFERENCES rooms(id)`. SQLite refuses a bed for a room that doesn't exist, and refuses to delete a student who still has complaints.
 
 ### 23. How did you test the project?
-75 automated `unittest` tests, each on a fresh database (SQLite by default; the same tests also pass on PostgreSQL), plus manual browser workflows checked against the database, a production-mode HTTP test, a clean-install test and responsive measurements. `check_database.py` runs 11 consistency checks after every test. See `docs/testing.md`.
+91 automated `unittest` tests, each on a fresh database (SQLite by default; the same tests also pass on PostgreSQL), plus manual browser workflows checked against the database, a production-mode HTTP test, a clean-install test and responsive measurements. `check_database.py` runs 11 consistency checks after every test. See `docs/testing.md`.
 
 ### 24. How would Firebase login be added?
 Only `authenticate_local()` in `routes/auth.py` changes. The new version verifies the Google ID token from Firebase, checks the email ends with `@mes.ac.in`, and finds the user in our `users` table. `login_user()`, sessions, role checks and every page stay the same, and the role still comes from our database.

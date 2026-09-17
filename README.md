@@ -137,7 +137,7 @@ HostelHub/
 ├── templates/          base.html, _macros.html, and one folder per feature
 ├── public/static/      css/, js/, images/ (served by Vercel's CDN; by Flask locally)
 ├── uploads/complaints/ local photos only (git-ignored, private)
-├── tests/              75 automated tests (base.py + 5 test files)
+├── tests/              91 automated tests (base.py + 6 test files)
 └── docs/               architecture, database, deployment, testing, viva
 ```
 
@@ -299,7 +299,7 @@ The Flask app **never** seeds or resets the hosted database by itself.
 
 ## 15. Known limitations
 
-- **Not yet tested on a live Vercel + Supabase deployment.** PostgreSQL support was tested against a local PostgreSQL 18 server (all tests pass), and the Supabase Storage calls against a fake server that follows the documented API. Check the first real deployment with the list in [docs/deployment.md](docs/deployment.md).
+- **Not yet tested on a live Vercel + Supabase deployment.** PostgreSQL support was tested against a local PostgreSQL 18 server (all 91 tests pass), and the Supabase Storage calls against a fake server that follows the documented API. Check the first real deployment with the list in [docs/deployment.md](docs/deployment.md).
 - **Demo passwords are public**: change them after deploying.
 - **4 MB photo limit**, because Vercel rejects requests larger than 4.5 MB.
 - **No college login, no password reset by email, no login rate-limiting.**
