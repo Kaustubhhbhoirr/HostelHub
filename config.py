@@ -11,13 +11,32 @@ import os
 # Absolute path of the folder that contains this file (the project root).
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
+# ------------------------------------------------------------------
+# Where is the app running?
+# ------------------------------------------------------------------
+# Environment variables are settings given to the program from OUTSIDE the
+# code (the terminal, or the Vercel dashboard). Secrets live there, never in Git.
+#
+# Vercel automatically sets VERCEL=1 on its servers. HOSTELHUB_ENV=production
+# lets you test production behaviour on your own computer too.
+IS_PRODUCTION = os.environ.get("VERCEL") == "1" or os.environ.get("HOSTELHUB_ENV") == "production"
+
+# Fallback key for local development ONLY. Production refuses to start with it.
+DEV_SECRET_KEY = "dev-only-change-this-secret-key"
+
 
 class Config:
     """Flask reads UPPERCASE attributes of this class as settings."""
 
+    IS_PRODUCTION = IS_PRODUCTION
+
     # Used by Flask to sign the session cookie. In production this must be
     # a long random value provided through an environment variable.
-    SECRET_KEY = os.environ.get("HOSTELHUB_SECRET_KEY", "dev-only-change-this-secret-key")
+    SECRET_KEY = os.environ.get("HOSTELHUB_SECRET_KEY") or DEV_SECRET_KEY
+
+    # Debug pages show source code and stack traces, so they are only allowed
+    # locally and only when explicitly requested with HOSTELHUB_DEBUG=1.
+    DEBUG = os.environ.get("HOSTELHUB_DEBUG") == "1" and not IS_PRODUCTION
 
     # SQLite database file and the SQL file that creates the tables.
     DATABASE = os.path.join(BASE_DIR, "database", "hostelhub.db")
@@ -36,6 +55,23 @@ class Config:
     # EXTRA defence; the real CSRF protection is the token check in routes/auth.py.
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
+    # In production the site is served over HTTPS, so the cookie is never sent over plain HTTP.
+    SESSION_COOKIE_SECURE = IS_PRODUCTION
+
+
+def check_production_settings(settings):
+    """Return a list of configuration problems that make production unsafe.
+
+    `settings` is Flask's app.config (a dictionary). Locally this always
+    returns an empty list, so development needs no extra setup.
+    """
+    problems = []
+    if settings["IS_PRODUCTION"]:
+        if settings["SECRET_KEY"] == DEV_SECRET_KEY or len(settings["SECRET_KEY"]) < 32:
+            problems.append("HOSTELHUB_SECRET_KEY must be set to a random value of at least 32 characters.")
+        if settings["DEBUG"]:
+            problems.append("Debug mode must be off in production.")
+    return problems
 
 
 # ------------------------------------------------------------------

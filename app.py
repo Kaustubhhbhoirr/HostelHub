@@ -18,7 +18,7 @@ from datetime import datetime
 from flask import Flask, g, redirect, render_template, url_for
 
 import database
-from config import Config, OPEN_COMPLAINT_STATUSES
+from config import Config, OPEN_COMPLAINT_STATUSES, check_production_settings
 from database import query_all, query_one
 from routes.account import account_bp
 from routes.auth import auth_bp, home_url_for
@@ -32,6 +32,12 @@ from seed import seed_database
 
 app = Flask(__name__)
 app.config.from_object(Config)
+
+# Stop immediately with a clear message instead of running production unsafely
+# (for example with the public development secret key).
+config_problems = check_production_settings(app.config)
+if config_problems:
+    raise RuntimeError("HostelHub production configuration error: " + " ".join(config_problems))
 database.init_app(app)
 
 # First run: no database file yet -> build it with demo data.
@@ -158,5 +164,5 @@ app.register_error_handler(500, lambda error: render_error(500))
 
 if __name__ == "__main__":
     # Debug mode shows code and stack traces in the browser, so it is OFF unless
-    # you ask for it:  set HOSTELHUB_DEBUG=1  (Windows)  /  export HOSTELHUB_DEBUG=1
-    app.run(debug=os.environ.get("HOSTELHUB_DEBUG") == "1")
+    # you ask for it locally with HOSTELHUB_DEBUG=1 (see config.py).
+    app.run(debug=app.config["DEBUG"])
