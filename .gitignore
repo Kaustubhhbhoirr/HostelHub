@@ -31,6 +31,9 @@ uploads/**
 !uploads/complaints/
 !uploads/complaints/.gitkeep
 
+# Downloaded or exported archives (may contain .env or the database)
+*.zip
+
 # Vercel CLI local project link
 .vercel/
 

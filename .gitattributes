@@ -1,0 +1,11 @@
+# Store and check out text files with LF line endings on every OS,
+# so Linux servers (Render, Vercel) and tests see the same bytes as Windows.
+* text=auto eol=lf
+
+# Binary files: never touch
+*.png binary
+*.jpg binary
+*.gif binary
+*.webp binary
+*.zip binary
+*.db binary
