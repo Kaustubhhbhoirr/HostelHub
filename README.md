@@ -120,6 +120,7 @@ HostelHub/
 ├── helpers.py          Shared rules: allocation, notifications, upload validation
 ├── seed.py             Rebuilds the demo database (SQLite, or PostgreSQL with confirmation)
 ├── check_database.py   Checks the data for inconsistencies (both databases)
+├── view_data.py        Read-only viewer for the local SQLite data (tables, queries, live --watch)
 ├── requirements.txt    Flask, psycopg, firebase-admin, python-dotenv, gunicorn
 ├── render.yaml         Render Blueprint (web service, start command, environment variables)
 ├── .python-version     Python version used by Vercel
@@ -139,7 +140,7 @@ HostelHub/
 ├── public/static/      css/, js/, images/ (served by Vercel's CDN; by Flask locally)
 ├── uploads/complaints/ local photos only (git-ignored, private)
 ├── tests/              110 automated tests (base.py + 7 test files)
-└── docs/               architecture, database, deployment, testing, viva
+└── docs/               architecture, database, deployment, testing, viewing-data, viva
 ```
 
 ## 8. Database
@@ -231,6 +232,12 @@ pip install -r requirements.txt
 
 ```bash
 python seed.py
+```
+
+**See what is inside the database** (read-only; `--watch` prints new rows live while you use the app; full guide: [docs/viewing-data.md](docs/viewing-data.md)):
+
+```bash
+python view_data.py
 ```
 
 **5. Check the data**
