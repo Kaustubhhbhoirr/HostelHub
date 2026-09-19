@@ -120,7 +120,8 @@ HostelHub/
 ├── helpers.py          Shared rules: allocation, notifications, upload validation
 ├── seed.py             Rebuilds the demo database (SQLite, or PostgreSQL with confirmation)
 ├── check_database.py   Checks the data for inconsistencies (both databases)
-├── requirements.txt    Flask, psycopg
+├── requirements.txt    Flask, psycopg, firebase-admin, python-dotenv, gunicorn
+├── render.yaml         Render Blueprint (web service, start command, environment variables)
 ├── .python-version     Python version used by Vercel
 ├── .env.example        Names of the environment variables (no values)
 │
@@ -264,7 +265,7 @@ Environment variables are settings given to the program from outside the code, s
 | `SUPABASE_SECRET_KEY` | leave empty | **required** | Server-only key for the private bucket |
 | `SUPABASE_BUCKET` | – | optional (default `complaint-photos`) | Bucket name |
 | `HOSTELHUB_DEBUG` | `1` to debug | ignored | Flask debug pages |
-| `HOSTELHUB_ENV` | `production` to try production rules | – | Vercel sets `VERCEL=1` automatically |
+| `HOSTELHUB_ENV` | `production` to try production rules | – | Vercel sets `VERCEL=1` and Render sets `RENDER=true` automatically; both count as production |
 | `HOSTELHUB_TEST_DATABASE_URL` | optional | – | Run the tests against an **empty** PostgreSQL test database |
 
 If production is missing a required value, **the app refuses to start** and names the problem in the Vercel logs, instead of silently using the demo secret or a temporary SQLite file.
@@ -281,6 +282,8 @@ Short version (the full step-by-step guide with troubleshooting is in **[docs/de
 5. Add the environment variables from section 12, deploy, then log in and change the warden password.
 
 The Flask app **never** seeds or resets the hosted database by itself.
+
+**Prefer Render?** The repository also contains a Render Blueprint ([`render.yaml`](render.yaml)) that runs the same app with `gunicorn`, keeping Supabase and Firebase unchanged. See [Deploying on Render](docs/deployment.md#10-deploying-on-render) for the setup, the environment variables, the Firebase authorised domain and the free-plan sleep behaviour.
 
 ## 14. Security measures
 

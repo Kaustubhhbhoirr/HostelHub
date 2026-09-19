@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Tests must never use real deployment settings from your terminal (for example a
 # production DATABASE_URL). Blank them out BEFORE the app is imported.
 TEST_DATABASE_URL = os.environ.get("HOSTELHUB_TEST_DATABASE_URL", "").strip()
-for variable in ("DATABASE_URL", "VERCEL", "HOSTELHUB_ENV", "HOSTELHUB_DEBUG",
+for variable in ("DATABASE_URL", "VERCEL", "RENDER", "HOSTELHUB_ENV", "HOSTELHUB_DEBUG",
                  "SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_BUCKET"):
     os.environ[variable] = ""
 

@@ -15,11 +15,16 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 # Where is the app running?
 # ------------------------------------------------------------------
 # Environment variables are settings given to the program from OUTSIDE the
-# code (the terminal, or the Vercel dashboard). Secrets live there, never in Git.
+# code (the terminal, or the Render / Vercel dashboard). Secrets live there, never in Git.
 #
-# Vercel automatically sets VERCEL=1 on its servers. HOSTELHUB_ENV=production
+# Render automatically sets RENDER=true and Vercel sets VERCEL=1 on their servers,
+# so the app can never silently run in development mode there. HOSTELHUB_ENV=production
 # lets you test production behaviour on your own computer too.
-IS_PRODUCTION = os.environ.get("VERCEL") == "1" or os.environ.get("HOSTELHUB_ENV") == "production"
+IS_PRODUCTION = (
+    os.environ.get("RENDER") == "true"
+    or os.environ.get("VERCEL") == "1"
+    or os.environ.get("HOSTELHUB_ENV") == "production"
+)
 
 # Fallback key for local development ONLY. Production refuses to start with it.
 DEV_SECRET_KEY = "dev-only-change-this-secret-key"
@@ -85,10 +90,10 @@ def check_production_settings(settings):
             problems.append("HOSTELHUB_SECRET_KEY must be set to a random value of at least 32 characters.")
         if settings["DEBUG"]:
             problems.append("Debug mode must be off in production.")
-        # Vercel's file system is temporary, so a SQLite file would lose data.
+        # Render's and Vercel's file systems are temporary, so a SQLite file would lose data.
         if not settings["DATABASE_URL"].startswith(("postgres://", "postgresql://")):
             problems.append("DATABASE_URL must point to a hosted PostgreSQL database.")
-        # Photos saved in Vercel's temporary file system would disappear.
+        # Photos saved in the host's temporary file system would disappear.
         if not settings["SUPABASE_URL"].startswith("https://") or not settings["SUPABASE_SECRET_KEY"]:
             problems.append("SUPABASE_URL (https://...) and SUPABASE_SECRET_KEY must be set for photo storage.")
     return problems

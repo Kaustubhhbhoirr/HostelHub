@@ -26,7 +26,7 @@ GOOD_PRODUCTION_ENV = {
     "SUPABASE_URL": "https://example-project.supabase.co",
     "SUPABASE_SECRET_KEY": "example-secret",
 }
-DEPLOYMENT_VARIABLES = ("VERCEL", "HOSTELHUB_ENV", "HOSTELHUB_DEBUG", "HOSTELHUB_SECRET_KEY", "DATABASE_URL",
+DEPLOYMENT_VARIABLES = ("VERCEL", "RENDER", "HOSTELHUB_ENV", "HOSTELHUB_DEBUG", "HOSTELHUB_SECRET_KEY", "DATABASE_URL",
                         "SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_BUCKET", "HOSTELHUB_TEST_DATABASE_URL")
 
 
@@ -95,6 +95,21 @@ class EnvironmentStartupTests(unittest.TestCase):
             self.assertIn(name, output)
         self.assertNotIn(GOOD_SECRET, output)
 
+    def test_render_refuses_to_start_without_settings(self):
+        """Render sets RENDER=true by itself, so a missing setting must stop the app there too."""
+        code, output = import_app_with({"RENDER": "true"})
+        self.assertNotEqual(code, 0)
+        self.assertIn("HostelHub production configuration error", output)
+        for name in ("HOSTELHUB_SECRET_KEY", "DATABASE_URL", "SUPABASE_URL"):
+            self.assertIn(name, output)
+
+    def test_render_behaves_like_production(self):
+        env = {**GOOD_PRODUCTION_ENV, "RENDER": "true"}
+        del env["VERCEL"]
+        code, output = import_app_with({**env, "HOSTELHUB_DEBUG": "1"})
+        self.assertEqual(code, 0, output)
+        self.assertIn("DEBUG False SECURE True PRODUCTION True POSTGRES True", output)
+
     def test_production_start_with_complete_settings(self):
         # HOSTELHUB_DEBUG=1 must be ignored in production.
         code, output = import_app_with({**GOOD_PRODUCTION_ENV, "HOSTELHUB_DEBUG": "1"})
@@ -130,11 +145,13 @@ class VercelLayoutTests(unittest.TestCase):
         self.assertFalse(os.path.isdir(os.path.join(PROJECT_ROOT, "static")), "old static/ folder should be gone")
 
     def test_requirements_and_python_version(self):
-        with open(os.path.join(PROJECT_ROOT, "requirements.txt"), encoding="utf-8") as file:
-            lines = [line.strip().lower() for line in file if line.strip() and not line.startswith("#")]
-        self.assertEqual(len(lines), 2, lines)
-        self.assertTrue(any(line.startswith("flask") for line in lines))
-        self.assertTrue(any(line.startswith("psycopg[binary]") for line in lines))
+        with open(os.path.join(PROJECT_ROOT, "requirements.txt"), encoding="utf-8", newline="") as file:
+            raw = file.read()
+        self.assertNotIn("\r", raw, "requirements.txt must use LF line endings")
+        lines = [line.strip().lower() for line in raw.splitlines() if line.strip() and not line.startswith("#")]
+        for package in ("flask", "psycopg[binary]", "firebase-admin", "python-dotenv", "gunicorn"):
+            self.assertTrue(any(line.startswith(package) for line in lines), f"{package} missing from requirements.txt")
+        self.assertEqual(len(lines), 5, lines)
         with open(os.path.join(PROJECT_ROOT, ".python-version"), encoding="utf-8") as file:
             self.assertRegex(file.read().strip(), r"^3\.(12|13|14)$")
 

@@ -6,7 +6,9 @@ This guide deploys HostelHub with:
 - **Supabase PostgreSQL** as the permanent database
 - **Supabase Storage** (a *private* bucket) for complaint photos
 
-> Never paste real passwords, keys or connection strings into this file, the README, `.env.example` or a Git commit. They only go into your terminal and the Vercel dashboard.
+> **Deploying on Render instead of Vercel?** Do steps 1, 3 and 4 below (GitHub, Supabase database, private bucket), then follow [section 10, Deploying on Render](#10-deploying-on-render).
+
+> Never paste real passwords, keys or connection strings into this file, the README, `.env.example` or a Git commit. They only go into your terminal and the Vercel or Render dashboard.
 
 Why not SQLite and a local folder on Vercel? Vercel runs Flask as a Function whose file system is **temporary**: anything written there can disappear at any time. The database and the photos therefore live in services that keep data permanently.
 
@@ -158,3 +160,70 @@ Work through this list on the live URL:
 | Supabase Storage calls | Verified against a fake server that follows the documented API, **not** against real Supabase |
 | Vercel Flask configuration | Follows the current Vercel Flask documentation (zero-config `app.py`, `public/` for static files); **not deployed yet** |
 | Real Vercel + Supabase deployment | **Not done yet**: follow steps 3–7 and run the checklist in step 7 |
+| Render configuration (`render.yaml`, `RENDER=true` production check) | The production check is covered by automated tests. `gunicorn` itself was **not** run: it does not work on Windows (needs `fcntl`), so only the WSGI app was served and checked locally. **Not deployed yet**: follow section 10 |
+
+---
+
+## 10. Deploying on Render
+
+HostelHub can run on [Render](https://render.com) instead of Vercel. Supabase (database + private photo bucket) and Firebase (Google login) stay exactly as they are; only the place where Flask runs changes. The repository contains a Render Blueprint, [`render.yaml`](../render.yaml), that describes the whole web service.
+
+Why Supabase is still needed: a Render web service also has a **temporary** file system, so SQLite files and uploaded photos would disappear on every deploy or restart.
+
+### 10.1 Create the service from the Blueprint
+
+1. Complete steps 1, 3 and 4 above (repository on GitHub, Supabase tables created once, private `complaint-photos` bucket).
+2. In the Render dashboard choose **New → Blueprint** and connect the GitHub repository.
+3. Render reads `render.yaml` and shows one web service, `hostelhub` (Python, free plan, Singapore region, branch `main`). It asks for a value for each variable marked `sync: false`. Fill them in as described below, then click **Apply**.
+4. Render runs `pip install -r requirements.txt` and starts `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`. It treats the deploy as healthy once `/login` answers.
+
+Later `git push` to `main` redeploys automatically.
+
+### 10.2 Environment variables
+
+| Variable | Who provides it | Value |
+|---|---|---|
+| `PYTHON_VERSION` | `render.yaml` | `3.12.8` |
+| `HOSTELHUB_ENV` | `render.yaml` | `production` |
+| `HOSTELHUB_SECRET_KEY` | Render generates it | random value, kept between deploys |
+| `SUPABASE_BUCKET` | `render.yaml` | `complaint-photos` |
+| `FIREBASE_CLIENT_CONFIG` | **you paste it** | from your local `.env` (see the quote warning below) |
+| `FIREBASE_SERVICE_ACCOUNT` | **you paste it** | from your local `.env` (see the quote warning below) |
+| `DATABASE_URL` | **you paste it** | Supabase *pooler* connection string (see below) |
+| `SUPABASE_URL` | **you paste it** | Supabase project URL, `https://<project>.supabase.co` |
+| `SUPABASE_SECRET_KEY` | **you paste it** | Supabase → Project Settings → *API Keys* |
+
+Render also sets `RENDER=true` on its own. HostelHub treats that like production, so on Render the app **refuses to start** (and names the missing variable in the logs) instead of silently running in development mode with the demo secret key or a temporary SQLite file.
+
+The local `.env` normally holds only the two Firebase values, because local development uses SQLite and local photo storage. `DATABASE_URL`, `SUPABASE_URL` and `SUPABASE_SECRET_KEY` come from the Supabase dashboard (step 2 above).
+
+**Paste the Firebase JSON without the surrounding single quotes.** In `.env` (and `.env.example`) the JSON is wrapped in `'...'` so the `.env` parser reads it as one value. Render's environment-variable box takes the text literally, so the quotes would become part of the value and the JSON would fail to parse. Paste only the object, from the opening `{` to the closing `}`:
+
+```
+{"type": "service_account", "project_id": "...", ...}
+```
+
+Do the same for `FIREBASE_CLIENT_CONFIG`. If Google login fails and the Render logs say `Failed to initialize Firebase Admin SDK`, a stray quote or a broken line break in the pasted JSON is the usual cause.
+
+**Use the Supabase pooler connection string for `DATABASE_URL`.** In Supabase open **Connect** and copy the *Transaction pooler* string. Its host looks like `aws-0-<region>.pooler.supabase.com` and its user like `postgres.<project-ref>`. Do **not** use the *Direct connection* host `db.<project-ref>.supabase.co`: it is IPv6-only, and Render cannot reach it, so the app would fail with `could not translate host name` or a connection timeout.
+
+### 10.3 Firebase: authorise the Render domain
+
+Google sign-in only works on domains that Firebase knows. In the Firebase console open **Authentication → Settings → Authorized domains → Add domain** and add your Render address, for example `hostelhub.onrender.com` (copy the exact host from the top of the service page in Render; it can have a random suffix if the name was taken). Without it the Google popup fails with `auth/unauthorized-domain`.
+
+### 10.4 Free plan: the service goes to sleep
+
+On Render's free plan the service is **spun down after about 15 minutes without traffic**. The first request after that wakes it up and can take up to a minute; the page then loads normally. This is normal behaviour, not an error. Paid plans stay awake. Free services also have a monthly limit of running hours, so an app that is never idle can be suspended until the next month.
+
+### 10.5 Render troubleshooting
+
+| Symptom | Likely cause and fix |
+|---|---|
+| Deploy fails or restarts; logs show `HostelHub production configuration error` | A required variable is empty. Read the message, set the variable in **Render → Environment**, and save (Render redeploys). |
+| Logs show `could not translate host name` / connection timeout | `DATABASE_URL` uses the IPv6-only `db.<ref>.supabase.co` host. Switch to the pooler string (10.2). |
+| `Failed to initialize Firebase Admin SDK` in the logs | `FIREBASE_SERVICE_ACCOUNT` was pasted with surrounding quotes or a changed line break (10.2). |
+| Google popup: `auth/unauthorized-domain` | The `onrender.com` domain is missing from Firebase Authorized domains (10.3). |
+| `relation "users" does not exist` | The Supabase tables were never created. Do step 3 once from your own computer; Render never seeds the database. |
+| First page load is very slow | The free instance was asleep (10.4). |
+
+Everything from sections 7 and 8 (the production test list and the general troubleshooting) also applies on Render.
