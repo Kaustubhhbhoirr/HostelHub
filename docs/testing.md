@@ -33,7 +33,7 @@ How the tests work:
 | | CollegeRequestTests (4) | draft → edit → send → status → can't go back to Draft → can't delete sent, delete draft, escalation notifies the student, invalid forms |
 | | NotificationTests (2) | open marks read and redirects, mark all read, clear read (only own), external links not followed |
 | | DashboardTests (4) | `percent()` never divides by zero, every warden number matches SQL counts, all warden pages work with an **empty hostel**, student pages without a bed |
-| | SeedDataTests (1) | 3 blocks, 32 rooms, 100 beds, 72 students, 5 waiting, 2 pending requests, all complaint and bed statuses present |
+| | SeedDataTests (1) | 3 blocks, 32 rooms, 100 beds, 73 students (72 demo + 1 Google account), 5 waiting, 2 pending requests, all complaint and bed statuses present, students on @student.mes.ac.in |
 
 ## 2. Route inventory (46 routes)
 
@@ -218,3 +218,55 @@ Screenshots were not possible because the browser pane was hidden; layout was ve
 
 - A **real Vercel deployment** (no Vercel account or CLI in this environment). Running `vercel dev` needs the Vercel CLI (`npm i -g vercel`) and a Vercel login.
 - **Real Supabase** PostgreSQL and Storage (no account available). See [deployment.md](deployment.md) step 7 for the checklist to run after deploying.
+
+## 6. Google sign-in (Firebase) tests — 19 Sep 2026
+
+Firebase is used **only for authentication**; the hostel data stays in SQLite.
+
+**Automated:** `tests/test_google_login.py` (17 tests). Firebase's `verify_id_token()` is replaced by a fake
+that returns chosen claims, so every rule is tested without a real Google account:
+
+| Case | Expected result |
+|---|---|
+| registered student signs in | 200, redirect to `/student/dashboard`, session set, `firebase_uid` saved |
+| extra `role: warden` claim inside the token | ignored; role comes from our database (student) |
+| warden (`@mes.ac.in`) signs in | redirect to `/warden/dashboard` |
+| capital letters in email, second sign-in | accepted |
+| unregistered college email | 404 "not registered" |
+| Gmail or `…@student.mes.ac.in.evil.com` | 403 "MES college Google account" |
+| unverified email | 403 |
+| malformed or expired token | 401 |
+| missing token | 400 |
+| POST without CSRF token | 400; Firebase is never called |
+| deactivated account | 403 |
+| account already linked to another Google account | 403; stored link unchanged |
+| server without Firebase configured | 503; no verification attempted |
+| Google-only account with any password | password login refused |
+| login page | Google button only when Firebase is configured; public config present, secret key absent; broken config hides the button |
+
+**Whole suite:** `python -m unittest discover tests` → **110 tests, OK** (SQLite).
+
+**Real Firebase round trip** (against the running app at `http://localhost:5000`):
+the Admin SDK created a custom token for a throw-away test user, Firebase's real API exchanged it for a
+genuine Google-signed ID token, and that token was posted to `/firebase-login` with a CSRF token.
+
+| Token | Result |
+|---|---|
+| real token, registered email | 200, redirect to dashboard, session works |
+| real token, unregistered `@student.mes.ac.in` email | 404 "not registered" |
+| real token, Gmail | 403 |
+| tampered token | 401 |
+
+The throw-away Firebase user was deleted afterwards. The Firebase project's configuration was read
+(read-only): Google provider **enabled**; authorised domains `localhost`, `hostelhub-5a230.firebaseapp.com`,
+`hostelhub-5a230.web.app`.
+
+**End-to-end HTTP test** on the running app (local SQLite mode): 24/24 checks passed (login, room,
+complaint with photo, private photo access, room change, warden actions, CSRF, notifications), and the
+data consistency check passed afterwards.
+
+**Not tested by the developer tooling:** clicking the Google popup with a real person's account. That
+step needs the account owner to sign in; see the manual check below.
+
+Manual check: open `http://localhost:5000/login`, click **Continue with Google**, choose
+`kaustubhb25comp@student.mes.ac.in` → the student dashboard for Kaustubh Bhoir (room A-102, bed 2) opens.

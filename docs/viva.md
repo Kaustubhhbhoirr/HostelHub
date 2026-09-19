@@ -91,10 +91,10 @@ With SQL: `COUNT(*)`, `GROUP BY status`, `SUM(CASE WHEN …)`. Nothing is hard-c
 A column that must match a row in another table, e.g. `beds.room_id REFERENCES rooms(id)`. SQLite refuses a bed for a room that doesn't exist, and refuses to delete a student who still has complaints.
 
 ### 23. How did you test the project?
-91 automated `unittest` tests, each on a fresh database (SQLite by default; the same tests also pass on PostgreSQL), plus manual browser workflows checked against the database, a production-mode HTTP test, a clean-install test and responsive measurements. `check_database.py` runs 11 consistency checks after every test. See `docs/testing.md`.
+110 automated `unittest` tests, each on a fresh SQLite database, plus manual browser workflows checked against the database, a production-mode HTTP test, a clean-install test and responsive measurements. `check_database.py` runs 11 consistency checks after every test. See `docs/testing.md`.
 
-### 24. How would Firebase login be added?
-Only `authenticate_local()` in `routes/auth.py` changes. The new version verifies the Google ID token from Firebase, checks the email ends with `@mes.ac.in`, and finds the user in our `users` table. `login_user()`, sessions, role checks and every page stay the same, and the role still comes from our database.
+### 24. How was Firebase Google login added without rewriting the app?
+We added `authenticate_google()` next to the existing `authenticate_local()` in `routes/auth.py`. It verifies the Google ID token with the Firebase Admin SDK, checks the email is verified and ends with `@student.mes.ac.in` (students) or `@mes.ac.in` (staff), and finds the user in our `users` table. Both then call the same `login_user()`, so sessions, role checks and every page stayed exactly the same, and the role still comes from our database. Details: question 32.
 
 ### 25. What are the current limitations?
 It runs on the development server with a demo secret key; there's no college login, email password reset or rate limiting; Bootstrap needs internet (CDN); notifications appear on page reload, not in real time; `%` in search acts as a wildcard.
@@ -118,6 +118,18 @@ For the same reason as the database: files written inside a Vercel Function can 
 
 ### 31. How does production stay safe from mistakes?
 On startup, `check_production_settings()` stops the app if the secret key, `DATABASE_URL` or storage settings are missing, instead of running with the public demo key or a temporary SQLite file. Debug is always off, the cookie is `Secure`, and the hosted database is never seeded automatically (`python seed.py` asks you to type `RESET`).
+
+### 32. How does "Continue with Google" work? Is Firebase our database?
+No. **Firebase is used only for authentication; all hostel data is in our SQLite database.**
+1. The login page opens Google's popup with the Firebase JavaScript SDK.
+2. Google/Firebase gives the browser a signed **ID token** proving which Google account signed in.
+3. The page POSTs the token (with our CSRF token) to `/firebase-login`.
+4. `authenticate_google()` verifies the token's signature with the **Firebase Admin SDK** and a secret service-account key kept only on the server.
+5. It checks the email is verified, ends with `@student.mes.ac.in` or `@mes.ac.in`, and **is already registered by the warden** in our `users` table.
+6. `login_user()` stores the user id in the session. The role still comes from our database, never from Google.
+
+### 33. Why can't anyone with an MES Google account log in?
+Because step 5 requires the warden to have registered that email first. Google proves *who* you are; HostelHub decides *whether you live in the hostel and what you may do*.
 
 ## Python concepts you can point to
 

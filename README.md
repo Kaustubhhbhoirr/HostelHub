@@ -138,7 +138,7 @@ HostelHub/
 ├── templates/          base.html, _macros.html, and one folder per feature
 ├── public/static/      css/, js/, images/ (served by Vercel's CDN; by Flask locally)
 ├── uploads/complaints/ local photos only (git-ignored, private)
-├── tests/              91 automated tests (base.py + 6 test files)
+├── tests/              110 automated tests (base.py + 7 test files)
 └── docs/               architecture, database, deployment, testing, viva
 ```
 
@@ -159,10 +159,21 @@ Two **partial unique indexes** (one active allocation per bed, one per student) 
 
 ## 9. Authentication approach
 
-- Email + password. Only a **hash** of the password is stored.
-- The session keeps only the **user id**; the role is read from the database on every request.
+There are two ways to log in. Both end the same way: the session stores only the **user id**, and the **role is read from our own database** on every request.
+
+1. **Continue with Google (Firebase Authentication)**, for real MES accounts.
+   - The login page opens Google's sign-in popup with the Firebase JavaScript SDK.
+   - Firebase gives the browser a signed **ID token**. The page sends it, plus the CSRF token, to `POST /firebase-login`.
+   - `authenticate_google()` in `routes/auth.py` verifies the token with the **Firebase Admin SDK**. The token must be genuine, unexpired and for our Firebase project.
+   - The email must be **verified** and end with `@student.mes.ac.in` (students) or `@mes.ac.in` (staff).
+   - The email must already be **registered by the warden** in HostelHub. Google alone is not enough.
+   - On first sign-in the Google account's id is saved in `users.firebase_uid`. A different Google account can never take over that user.
+   - **Firebase is used only to check who is logging in.** All hostel data stays in HostelHub's own database (SQLite locally).
+2. **Email + password**, for the demo accounts. Only a **hash** of the password is stored.
+
+Other rules:
+- Every **student** email must end with **`@student.mes.ac.in`** (the student form enforces it). The warden uses `@mes.ac.in`.
 - `@student_required` / `@warden_required` check the role on the server (403 if wrong).
-- **Firebase later:** only `authenticate_local()` in `routes/auth.py` needs replacing. The `firebase_uid` column is already reserved.
 
 ## 10. Workflows
 
@@ -240,16 +251,23 @@ python -m unittest discover tests -v
 python app.py
 ```
 
-Open **http://127.0.0.1:5000**. Debug mode is off unless you set `HOSTELHUB_DEBUG=1`.
+Open **http://localhost:5000**. Debug mode is off unless you set `HOSTELHUB_DEBUG=1`.
 
-### Demo credentials (fictional)
+### Logging in
 
-| Role | Email | Password |
-|---|---|---|
-| Student | `student@mes.ac.in` | `Student@123` |
-| Warden | `warden@mes.ac.in` | `Warden@123` |
+| Account | How to log in |
+|---|---|
+| `kaustubhb25comp@student.mes.ac.in` (Kaustubh Bhoir, student, room A-102) | **Continue with Google**; this account has no usable password |
+| `student@student.mes.ac.in` (demo student) | password `Student@123` |
+| `warden@mes.ac.in` (demo warden) | password `Warden@123` |
 
-Every other seeded student (e.g. `rohan.patil@mes.ac.in`) also uses `Student@123`. Passwords are stored hashed. Demo data: 3 blocks, 32 rooms, 100 beds, 72 students (5 waiting for a bed), complaints in every status, 2 pending room changes, 4 college requests.
+Every other seeded student (e.g. `rohan.patil@student.mes.ac.in`) also uses `Student@123`. The demo names are fictional; passwords are stored hashed. Demo data: 3 blocks, 32 rooms, 100 beds, 73 students (72 demo + 1 Google account; 5 waiting for a bed), complaints in every status, 2 pending room changes, 4 college requests.
+
+To let another team member use Google login, the warden adds them under **Students → Add student** with their `@student.mes.ac.in` email, or you add them to `GOOGLE_STUDENTS` in `seed.py`.
+
+**Google login locally needs:**
+- the two `FIREBASE_*` values in a `.env` file (see section 12)
+- the app opened at **http://localhost:5000**. `127.0.0.1` is not an authorised domain in Firebase, so the Google popup would refuse it.
 
 > **On a public deployment, change the warden password immediately** (Profile → Change password), because these demo passwords are published in this README.
 
@@ -266,7 +284,11 @@ Environment variables are settings given to the program from outside the code, s
 | `SUPABASE_BUCKET` | – | optional (default `complaint-photos`) | Bucket name |
 | `HOSTELHUB_DEBUG` | `1` to debug | ignored | Flask debug pages |
 | `HOSTELHUB_ENV` | `production` to try production rules | – | Vercel sets `VERCEL=1` and Render sets `RENDER=true` automatically; both count as production |
+| `FIREBASE_CLIENT_CONFIG` | for Google login | for Google login | PUBLIC Firebase web config (JSON in single quotes) |
+| `FIREBASE_SERVICE_ACCOUNT` | for Google login | for Google login | **SECRET** service-account key (JSON in single quotes). Verifies Google tokens on the server; never commit or share it |
 | `HOSTELHUB_TEST_DATABASE_URL` | optional | – | Run the tests against an **empty** PostgreSQL test database |
+
+Locally, put these in a file named **`.env`** in the project folder. `app.py` loads it with `python-dotenv`. `.env` is git-ignored and must never be committed. Without the `FIREBASE_*` values the Google button is simply hidden and password login still works.
 
 If production is missing a required value, **the app refuses to start** and names the problem in the Vercel logs, instead of silently using the demo secret or a temporary SQLite file.
 

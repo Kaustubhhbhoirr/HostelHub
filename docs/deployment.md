@@ -127,7 +127,7 @@ Work through this list on the live URL:
 
 1. `/login` loads with the HostelHub styling (CSS from `/static/css/style.css`).
 2. Log in as the **warden**, then immediately go to **Profile → Change password** (the demo password is public).
-3. Warden dashboard numbers match the demo data (100 beds, 72 students).
+3. Warden dashboard numbers match the demo data (100 beds, 73 students).
 4. **Allocation map**: switch blocks and floors, click a green bed, allocate a waiting student (the bed turns red), then vacate it (it turns green).
 5. Log in as the **student** (change this password too), report a complaint **with a photo**, and open the complaint: the photo appears.
 6. Copy the photo address (`/complaints/<id>/image`) and open it in a private or incognito window: you must be sent to the login page, not shown the photo.
@@ -154,7 +154,7 @@ Work through this list on the live URL:
 
 | Item | Status |
 |---|---|
-| Local SQLite mode | Verified: 91 automated tests, seed, consistency check, browser checks |
+| Local SQLite mode | Verified: 110 automated tests, seed, consistency check, browser checks |
 | PostgreSQL support | Verified against a local PostgreSQL 18 server: all 91 tests, seed and consistency check |
 | Production mode (`VERCEL=1`) with PostgreSQL | Verified locally with a real HTTP server: 24 end-to-end checks, Secure cookie, debug off |
 | Supabase Storage calls | Verified against a fake server that follows the documented API, **not** against real Supabase |

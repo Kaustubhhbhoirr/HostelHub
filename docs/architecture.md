@@ -8,7 +8,7 @@ The **same code** runs in two modes. Only the settings (environment variables) c
 LOCAL DEVELOPMENT                         PRODUCTION (DEPLOYMENT)
 
   Browser                                   Browser
-     │  http://127.0.0.1:5000                  │  https://your-app.vercel.app
+     │  http://localhost:5000                  │  https://your-app.vercel.app
      ▼                                         ▼
   Flask  (python app.py)                    Vercel
      │                                         ├── CDN: public/static/* (CSS, JS, images)
