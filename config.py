@@ -68,6 +68,9 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     # In production the site is served over HTTPS, so the cookie is never sent over plain HTTP.
     SESSION_COOKIE_SECURE = IS_PRODUCTION
+    
+    # Firebase configuration for the frontend
+    FIREBASE_CLIENT_CONFIG = os.environ.get("FIREBASE_CLIENT_CONFIG", "")
 
 
 def check_production_settings(settings):
@@ -156,3 +159,24 @@ DEPARTMENTS = (
     "Mechanical Engineering",
     "AI & Data Science",
 )
+
+# ------------------------------------------------------------------
+# Firebase Initialization
+# ------------------------------------------------------------------
+import json
+import firebase_admin
+from firebase_admin import credentials
+
+# Initialize the Firebase Admin SDK for verifying Google ID tokens.
+# We do this here so it's initialized as soon as config.py is imported.
+try:
+    if not firebase_admin._apps:
+        sa_env = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
+        if sa_env:
+            cert = json.loads(sa_env)
+            cred = credentials.Certificate(cert)
+            firebase_admin.initialize_app(cred)
+        else:
+            print("Notice: FIREBASE_SERVICE_ACCOUNT is not set. Google login will fail.")
+except Exception as e:
+    print(f"Warning: Failed to initialize Firebase Admin SDK: {e}")

@@ -193,3 +193,54 @@ def logout():
     session.clear()
     flash("You have been logged out.", "info")
     return redirect(url_for("auth.login"))
+
+
+# ------------------------------------------------------------------
+# Firebase Google Login Route
+# ------------------------------------------------------------------
+@auth_bp.route("/firebase-login", methods=["POST"])
+def firebase_login():
+    import firebase_admin
+    from firebase_admin import auth
+    from database import get_db
+
+    id_token = request.form.get("idToken")
+    if not id_token:
+        return {"error": "Missing ID token"}, 400
+
+    try:
+        # Verify the token with Firebase Admin SDK
+        decoded_token = auth.verify_id_token(id_token)
+        email = decoded_token.get("email", "")
+        uid = decoded_token.get("uid")
+
+        if not email:
+            return {"error": "Email not provided by Google"}, 400
+
+        # Domain Check
+        if not (email.endswith("@student.mes.ac.in") or email.endswith("@mes.ac.in")):
+            return {"error": "Unauthorized domain. Please use your MES Google account."}, 403
+
+        # Database Check: Was the user pre-registered by the warden?
+        user = query_one("SELECT * FROM users WHERE email = ?", (email,))
+        if not user:
+            return {"error": "Account not found. Please contact the warden to register your account."}, 404
+        
+        if not user["is_active"]:
+            return {"error": "This account has been deactivated."}, 403
+
+        # Update firebase_uid if it's missing
+        if not user["firebase_uid"]:
+            db = get_db()
+            db.execute("UPDATE users SET firebase_uid = ? WHERE id = ?", (uid, user["id"]))
+            db.commit()
+
+        # Log them in locally (sets the session)
+        login_user(user)
+        
+        # Return success and the redirect URL
+        return {"success": True, "redirect": home_url_for(user["role"])}, 200
+
+    except Exception as e:
+        print(f"Firebase token verification failed: {e}")
+        return {"error": "Authentication failed. Please try again."}, 401

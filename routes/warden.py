@@ -215,10 +215,10 @@ def read_student_form(is_new):
     errors = []
     if len(data["name"]) < 3:
         errors.append("Please enter the student's full name.")
-    local_part = data["email"].removesuffix("@" + ALLOWED_EMAIL_DOMAIN)
-    if (not data["email"].endswith("@" + ALLOWED_EMAIL_DOMAIN) or not local_part
+    local_part = data["email"].removesuffix("@student.mes.ac.in")
+    if (not data["email"].endswith("@student.mes.ac.in") or not local_part
             or "@" in local_part or " " in data["email"]):
-        errors.append(f"Email must be a college address ending with @{ALLOWED_EMAIL_DOMAIN}.")
+        errors.append("Email must be a college address ending with @student.mes.ac.in.")
     if not data["student_id"]:
         errors.append("Student ID is required.")
     if data["phone"] and not (data["phone"].isdigit() and len(data["phone"]) == 10):

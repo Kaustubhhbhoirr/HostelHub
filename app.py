@@ -14,6 +14,10 @@ This file:
 
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from flask import Flask, g, redirect, render_template, url_for
 
