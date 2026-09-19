@@ -16,7 +16,8 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Read settings from a local .env file if there is one (git-ignored, never committed).
+# Variables already set in the terminal or hosting dashboard take priority.
 load_dotenv()
 
 from flask import Flask, g, redirect, render_template, url_for
@@ -25,7 +26,7 @@ import database
 from config import Config, OPEN_COMPLAINT_STATUSES, check_production_settings
 from database import local_now, query_all, query_one
 from routes.account import account_bp
-from routes.auth import auth_bp, home_url_for
+from routes.auth import auth_bp, home_url_for, init_firebase
 from routes.college import college_bp
 from routes.complaints import complaints_bp
 from routes.requests import requests_bp
@@ -47,6 +48,9 @@ config_problems = check_production_settings(app.config)
 if config_problems:
     raise RuntimeError("HostelHub production configuration error: " + " ".join(config_problems))
 database.init_app(app)
+
+# Google sign-in: start the Firebase Admin SDK if its secret key was provided.
+init_firebase(app)
 
 # First LOCAL run: no SQLite file yet -> build it with demo data.
 # A hosted PostgreSQL database is NEVER seeded automatically (that would wipe real

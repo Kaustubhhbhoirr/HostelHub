@@ -280,6 +280,9 @@ a.stat-card:hover { transform: translateY(-2px); box-shadow: var(--hh-shadow-lg)
 .demo-account:hover { border-color: #a5b4fc; background: var(--hh-primary-soft); }
 .demo-account .role { font-weight: 700; font-size: .85rem; display: flex; align-items: center; gap: .4rem; }
 .demo-account .email { font-size: .72rem; color: var(--hh-muted); }
+.btn-google { display: flex; align-items: center; justify-content: center; gap: .6rem; background: #fff; border: 1px solid #dadce0; color: #1f1f1f; }
+.btn-google:hover { background: #f8fafc; border-color: #c4c7cc; color: #1f1f1f; }
+.btn-google:disabled { opacity: .75; }
 .divider-text { display: flex; align-items: center; gap: .75rem; color: #94a3b8; font-size: .75rem; margin: 1.5rem 0 1rem; }
 .divider-text::before, .divider-text::after { content: ""; flex: 1; height: 1px; background: var(--hh-border); }
 

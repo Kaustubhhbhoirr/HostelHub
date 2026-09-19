@@ -73,9 +73,13 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     # In production the site is served over HTTPS, so the cookie is never sent over plain HTTP.
     SESSION_COOKIE_SECURE = IS_PRODUCTION
-    
-    # Firebase configuration for the frontend
-    FIREBASE_CLIENT_CONFIG = os.environ.get("FIREBASE_CLIENT_CONFIG", "")
+
+    # Google sign-in (Firebase). Both are optional: without them the Google button is hidden.
+    #   FIREBASE_CLIENT_CONFIG   - PUBLIC web config (JSON), sent to the login page
+    #   FIREBASE_SERVICE_ACCOUNT - SECRET service-account key (JSON), used only on the server
+    #                              to verify Google sign-in tokens. Never commit it.
+    FIREBASE_CLIENT_CONFIG = os.environ.get("FIREBASE_CLIENT_CONFIG", "").strip()
+    FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
 
 
 def check_production_settings(settings):
@@ -103,8 +107,13 @@ def check_production_settings(settings):
 # Choice lists used by forms, validation and templates
 # ------------------------------------------------------------------
 
-# Only college accounts may be created (Firebase will enforce this later too).
-ALLOWED_EMAIL_DOMAIN = "mes.ac.in"
+# MES college email rules:
+#   - every STUDENT account must end with @student.mes.ac.in (their college Google account)
+#   - staff such as the warden use @mes.ac.in
+# Only these two domains may sign in with Google.
+STUDENT_EMAIL_DOMAIN = "@student.mes.ac.in"
+STAFF_EMAIL_DOMAIN = "@mes.ac.in"
+COLLEGE_EMAIL_DOMAINS = (STUDENT_EMAIL_DOMAIN, STAFF_EMAIL_DOMAIN)
 
 # A set is used because we only need fast "is this extension allowed?" checks.
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
@@ -164,24 +173,3 @@ DEPARTMENTS = (
     "Mechanical Engineering",
     "AI & Data Science",
 )
-
-# ------------------------------------------------------------------
-# Firebase Initialization
-# ------------------------------------------------------------------
-import json
-import firebase_admin
-from firebase_admin import credentials
-
-# Initialize the Firebase Admin SDK for verifying Google ID tokens.
-# We do this here so it's initialized as soon as config.py is imported.
-try:
-    if not firebase_admin._apps:
-        sa_env = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
-        if sa_env:
-            cert = json.loads(sa_env)
-            cred = credentials.Certificate(cert)
-            firebase_admin.initialize_app(cred)
-        else:
-            print("Notice: FIREBASE_SERVICE_ACCOUNT is not set. Google login will fail.")
-except Exception as e:
-    print(f"Warning: Failed to initialize Firebase Admin SDK: {e}")

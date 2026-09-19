@@ -102,7 +102,7 @@ class HostelHubTestCase(unittest.TestCase):
         return self.post("/login", {"email": email, "password": password})
 
     def login_student(self):
-        return self.login("student@mes.ac.in", "Student@123")
+        return self.login("student@student.mes.ac.in", "Student@123")
 
     def login_warden(self):
         return self.login("warden@mes.ac.in", "Warden@123")
@@ -117,7 +117,7 @@ class HostelHubTestCase(unittest.TestCase):
 
     # ---------------- demo data lookups ----------------
     def demo_student_id(self):
-        return self.one("SELECT id FROM users WHERE email = 'student@mes.ac.in'")["id"]
+        return self.one("SELECT id FROM users WHERE email = 'student@student.mes.ac.in'")["id"]
 
     def active_bed_of(self, student_id):
         row = self.one("SELECT bed_id FROM allocations WHERE student_id = ? AND status = 'active'", (student_id,))

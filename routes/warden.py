@@ -11,7 +11,7 @@ CRUD on the users table:
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from werkzeug.security import generate_password_hash
 
-from config import ALLOWED_EMAIL_DOMAIN, DEPARTMENTS, OPEN_COMPLAINT_STATUSES
+from config import STUDENT_EMAIL_DOMAIN, DEPARTMENTS, OPEN_COMPLAINT_STATUSES
 from database import DatabaseError, IntegrityError, execute, get_db, now_str, query_all, query_one
 from helpers import (InvalidAllocationError, cancel_pending_room_requests,
                      get_active_allocation, vacate_bed)
@@ -215,10 +215,12 @@ def read_student_form(is_new):
     errors = []
     if len(data["name"]) < 3:
         errors.append("Please enter the student's full name.")
-    local_part = data["email"].removesuffix("@student.mes.ac.in")
-    if (not data["email"].endswith("@student.mes.ac.in") or not local_part
+    # Students must use their MES student Google account, e.g. name@student.mes.ac.in.
+    # The part before the domain must be a plain name ("a@b@..." or just "@student.mes.ac.in" are refused).
+    local_part = data["email"].removesuffix(STUDENT_EMAIL_DOMAIN)
+    if (not data["email"].endswith(STUDENT_EMAIL_DOMAIN) or not local_part
             or "@" in local_part or " " in data["email"]):
-        errors.append("Email must be a college address ending with @student.mes.ac.in.")
+        errors.append(f"Student email must be an MES college address ending with {STUDENT_EMAIL_DOMAIN}.")
     if not data["student_id"]:
         errors.append("Student ID is required.")
     if data["phone"] and not (data["phone"].isdigit() and len(data["phone"]) == 10):

@@ -7,14 +7,14 @@ from routes.warden import percent
 
 
 class StudentCrudTests(HostelHubTestCase):
-    FORM = {"name": "Test Student", "email": "test.student@mes.ac.in", "student_id": "26CE999",
+    FORM = {"name": "Test Student", "email": "test.student@student.mes.ac.in", "student_id": "26CE999",
             "phone": "9123456789", "department": "Computer Engineering", "year_of_study": "1",
             "password": "Password123"}
 
     def test_create_edit_delete(self):
         self.login_warden()
         self.post("/warden/students/new", self.FORM)
-        created = self.one("SELECT * FROM users WHERE email = 'test.student@mes.ac.in'")
+        created = self.one("SELECT * FROM users WHERE email = 'test.student@student.mes.ac.in'")
         self.assertEqual((created["role"], created["student_id"]), ("student", "26CE999"))
         self.assertNotEqual(created["password_hash"], "Password123")
 
@@ -33,13 +33,16 @@ class StudentCrudTests(HostelHubTestCase):
         cases = [
             ({"email": "x@gmail.com"}, b"college address"),
             ({"email": "@mes.ac.in"}, b"college address"),
+            ({"email": "@student.mes.ac.in"}, b"college address"),
+            ({"email": "x@student.mes.ac.in.evil.com"}, b"college address"),
+            ({"email": "staff.name@mes.ac.in"}, b"@student.mes.ac.in"),        # students need the student domain
             ({"email": "a b@mes.ac.in"}, b"college address"),
             ({"phone": "12345"}, b"exactly 10 digits"),
             ({"department": "Astrology"}, b"choose a department"),
             ({"year_of_study": "7"}, b"year of study"),
             ({"password": "short"}, b"at least 8 characters"),
             ({"name": ""}, b"full name"),
-            ({"email": "student@mes.ac.in", "student_id": "NEW001"}, b"already uses this email"),
+            ({"email": "student@student.mes.ac.in", "student_id": "NEW001"}, b"already uses this email"),
             ({"student_id": "25CE001"}, b"already has this student ID"),
         ]
         for change, message in cases:
@@ -260,14 +263,19 @@ class SeedDataTests(HostelHubTestCase):
         self.assertEqual(self.count("SELECT COUNT(DISTINCT block) FROM rooms"), 3)
         self.assertEqual(self.count("SELECT COUNT(*) FROM rooms"), 32)
         self.assertEqual(self.count("SELECT COUNT(*) FROM beds"), 100)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'student'"), 72)
+        # 72 demo students + 1 Google sign-in team account (seed.GOOGLE_STUDENTS)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'student'"), 73)
         self.assertEqual(len(self.unallocated_student_ids()), 5)
         self.assertEqual(self.count("SELECT COUNT(*) FROM room_change_requests WHERE status = 'Pending'"), 2)
         statuses = {row["status"] for row in self.all("SELECT DISTINCT status FROM complaints")}
         self.assertEqual(statuses, {"Submitted", "Acknowledged", "In Progress", "Resolved", "Rejected"})
         bed_statuses = {row["status"] for row in self.all("SELECT DISTINCT status FROM beds")}
         self.assertEqual(bed_statuses, {"available", "occupied", "reserved", "maintenance", "unavailable"})
-        self.assertTrue(self.count("SELECT COUNT(*) FROM users WHERE email NOT LIKE '%@mes.ac.in'") == 0)
+        # Every student uses @student.mes.ac.in; the warden uses @mes.ac.in.
+        self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'student' "
+                                    "AND email NOT LIKE '%@student.mes.ac.in'"), 0)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'warden' "
+                                    "AND email NOT LIKE '%@mes.ac.in'"), 0)
 
 
 if __name__ == "__main__":

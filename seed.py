@@ -17,6 +17,7 @@ than hundreds of hand-written INSERT statements.
 """
 
 import random
+import secrets
 import sys
 from datetime import timedelta
 
@@ -27,6 +28,13 @@ from database import connect, create_tables, insert, local_now, run
 
 STUDENT_PASSWORD = "Student@123"
 WARDEN_PASSWORD = "Warden@123"
+
+# Real team accounts that sign in with "Continue with Google" (Firebase).
+# They get a random password that nobody knows, so Google is the only way in.
+GOOGLE_STUDENTS = [
+    # (name, college Google email, student ID, department, year)
+    ("Kaustubh Bhoir", "kaustubhb25comp@student.mes.ac.in", "25CE101", "Computer Engineering", 2),
+]
 
 # Block layout: block letter -> (number of floors, rooms per floor, beds per room)
 HOSTEL_LAYOUT = {
@@ -165,15 +173,15 @@ def seed_database(db_path=Config.DATABASE, database_url=""):
     warden_id = insert_user(conn, "Dr. Meera Kulkarni", "warden@mes.ac.in", warden_hash,
                             "warden", phone="9820012345", created_days_ago=400)
 
-    demo_student = insert_user(conn, "Aarav Sharma", "student@mes.ac.in", student_hash, "student",
+    demo_student = insert_user(conn, "Aarav Sharma", "student@student.mes.ac.in", student_hash, "student",
                                "25CE001", "9876543210", "Computer Engineering", 2)
 
-    used_emails = {"student@mes.ac.in", "warden@mes.ac.in"}
+    used_emails = {"student@student.mes.ac.in", "warden@mes.ac.in"}
     students = []  # list of (user_id, name)
     serial = 2
     while len(students) < 71:
         first, last = random.choice(FIRST_NAMES), random.choice(LAST_NAMES)
-        email = f"{first.lower()}.{last.lower()}@mes.ac.in"
+        email = f"{first.lower()}.{last.lower()}@student.mes.ac.in"
         if email in used_emails:
             continue
         used_emails.add(email)
@@ -315,6 +323,22 @@ def seed_database(db_path=Config.DATABASE, database_url=""):
     run(conn, "UPDATE allocations SET allocated_at = ? WHERE student_id = ? AND status = 'active'",
         (ago(days=15), moved_student))
 
+    # ---------------- Google sign-in team accounts ----------------
+    # Added last so every other demo row above stays exactly the same.
+    for name, email, roll, department, year in GOOGLE_STUDENTS:
+        google_only_hash = generate_password_hash(secrets.token_hex(32))
+        user_id = insert_user(conn, name, email, google_only_hash, "student", roll, None, department, year,
+                              created_days_ago=30)
+        free_bed = run(
+            conn,
+            """SELECT beds.id FROM beds JOIN rooms ON rooms.id = beds.room_id
+               WHERE beds.status = 'available' AND rooms.status = 'active' ORDER BY beds.id LIMIT 1"""
+        ).fetchone()["id"]
+        allocate(conn, user_id, free_bed, 30)
+        notify(conn, user_id, "Welcome to HostelHub",
+               "Your hostel account is ready. Sign in any time with your MES Google account.",
+               "system", "/student/dashboard", 0, ago(days=30))
+
     # ---------------- College maintenance requests ----------------
     college_requests = [
         (c_fan, "Replacement", "Ceiling Fan", "Block A, Room 201", 1,
@@ -395,5 +419,7 @@ if __name__ == "__main__":
     else:
         seed_database(Config.DATABASE)
         print("Database created with demo data:", Config.DATABASE)
-    print(f"  Student login: student@mes.ac.in / {STUDENT_PASSWORD}")
+    print(f"  Student login: student@student.mes.ac.in / {STUDENT_PASSWORD}")
     print(f"  Warden login : warden@mes.ac.in / {WARDEN_PASSWORD}")
+    for _name, google_email, *_rest in GOOGLE_STUDENTS:
+        print(f"  Google login : {google_email} (Continue with Google)")

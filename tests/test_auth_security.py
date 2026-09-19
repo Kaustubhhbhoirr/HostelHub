@@ -14,7 +14,7 @@ def build_url(rule):
 class AuthenticationTests(HostelHubTestCase):
 
     def test_invalid_and_empty_login_are_rejected(self):
-        response = self.login("student@mes.ac.in", "wrong-password")
+        response = self.login("student@student.mes.ac.in", "wrong-password")
         self.assertIn(b"Invalid email or password", response.data)
         response = self.login("nobody@mes.ac.in", "Student@123")
         self.assertIn(b"Invalid email or password", response.data)
@@ -30,7 +30,7 @@ class AuthenticationTests(HostelHubTestCase):
         self.assertEqual(self.client.get("/warden/dashboard").status_code, 200)
 
     def test_email_is_case_insensitive(self):
-        self.assertEqual(self.login("  STUDENT@MES.AC.IN ", "Student@123").location, "/student/dashboard")
+        self.assertEqual(self.login("  STUDENT@Student.MES.ac.in ", "Student@123").location, "/student/dashboard")
 
     def test_logout_clears_the_session(self):
         self.login_student()
@@ -71,7 +71,7 @@ class AuthenticationTests(HostelHubTestCase):
 class CsrfTests(HostelHubTestCase):
 
     def test_post_without_token_is_rejected(self):
-        response = self.client.post("/login", data={"email": "student@mes.ac.in", "password": "Student@123"})
+        response = self.client.post("/login", data={"email": "student@student.mes.ac.in", "password": "Student@123"})
         self.assertEqual(response.status_code, 400)
         self.assertIn(b"Form expired", response.data)
 
@@ -112,7 +112,7 @@ class RouteInventoryTests(HostelHubTestCase):
             self.assertEqual(response.status_code, 302, rule.rule)
             self.assertEqual(response.location, "/login", rule.rule)
         for rule in self.rules("POST"):
-            if rule.rule in ("/login", "/logout"):
+            if rule.rule in ("/login", "/logout", "/firebase-login"):   # public POST routes
                 continue
             response = self.post(build_url(rule))
             self.assertEqual(response.status_code, 302, rule.rule)
