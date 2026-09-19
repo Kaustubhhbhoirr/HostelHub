@@ -316,3 +316,8 @@ The Flask app **never** seeds or resets the hosted database by itself.
 - Export reports (occupancy, complaint turnaround) to PDF/Excel
 - Email or push notifications
 - Complaint analytics over time
+
+## 17. Recent Updates
+
+- **Student Email Validation:** Updated the Warden's "Add Student" form to strictly enforce the `@student.mes.ac.in` email domain for all new student accounts.
+- **Environment Variables:** Integrated `python-dotenv` into `app.py` so that local `.env` files are automatically loaded when running the Flask server locally.
