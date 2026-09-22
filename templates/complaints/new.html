@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, empty_state %}
+{% block title %}Report an Issue{% endblock %}
+{% block topbar_title %}Student Portal{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('complaints.student_list') }}" class="breadcrumb-link"><i class="bi bi-arrow-left"></i>My complaints</a>
+{{ page_header('Report a maintenance issue', 'The warden will be notified as soon as you submit.') }}
+
+{% if not allocation %}
+  <div class="card">{{ empty_state('bi-door-closed', 'No room allocated', 'You can report room issues once the warden has allocated you a bed.') }}</div>
+{% else %}
+{# enctype="multipart/form-data" is REQUIRED for file uploads to reach request.files in Flask. #}
+<form method="post" enctype="multipart/form-data" id="complaintForm" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="form-section-title">1. What is the problem?</div>
+          <p class="form-section-text">Choose the category that fits best.</p>
+          {% set icons = {'Fan': 'bi-fan', 'Light': 'bi-lightbulb', 'Electrical': 'bi-lightning-charge', 'Plumbing': 'bi-droplet-half', 'Furniture': 'bi-lamp', 'Bathroom': 'bi-badge-wc', 'Door/Lock': 'bi-key', 'Water': 'bi-cup-straw', 'Cleaning': 'bi-stars', 'Other': 'bi-three-dots'} %}
+          <div class="choice-grid" role="radiogroup" aria-label="Category">
+            {% for cat in categories %}
+              <div class="choice-card">
+                <input type="radio" name="category" id="cat{{ loop.index }}" value="{{ cat }}" {{ 'checked' if form.category == cat }} required>
+                <label for="cat{{ loop.index }}"><i class="bi {{ icons.get(cat, 'bi-tools') }}"></i>{{ cat }}</label>
+              </div>
+            {% endfor %}
+          </div>
+          <div class="invalid-feedback d-block d-none" id="categoryError">Please choose a category.</div>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body">
+          <label class="form-section-title d-block" for="description">2. Describe it</label>
+          <p class="form-section-text">Where exactly is it, and since when? Clear details help it get fixed faster.</p>
+          <textarea class="form-control" id="description" name="description" rows="5" maxlength="1000" required
+                    placeholder="e.g. The ceiling fan above bed 2 makes a grinding noise and stops after a few minutes.">{{ form.description }}</textarea>
+          <div class="d-flex justify-content-between mt-1">
+            <div class="invalid-feedback d-block d-none" id="descriptionError">Please write at least 15 characters.</div>
+            <div class="form-text ms-auto"><span id="charCount">{{ form.description|length }}</span>/1000</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="form-section-title">3. Add a photo <span class="text-muted fw-normal">(optional)</span></div>
+          <p class="form-section-text">PNG, JPG, WEBP or GIF up to 4 MB.</p>
+          <label class="upload-zone" id="uploadZone" for="image">
+            <i class="bi bi-cloud-arrow-up d-block mb-2"></i>
+            <span class="fw-semibold">Click to choose a photo</span>
+            <span class="d-block text-muted small">or drag and drop it here</span>
+          </label>
+          <input type="file" class="d-none" id="image" name="image" accept=".png,.jpg,.jpeg,.webp,.gif,image/*">
+          <div class="upload-preview d-none mt-2" id="uploadPreview">
+            <img id="previewImage" alt="Selected photo preview">
+            <button type="button" class="btn btn-sm btn-light btn-remove" id="removeImage"><i class="bi bi-x-lg me-1"></i>Remove</button>
+          </div>
+          <div class="invalid-feedback d-block d-none" id="imageError"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="form-section-title">Priority</div>
+          <p class="form-section-text">How urgent is this?</p>
+          {% set hints = {'Low': 'Minor inconvenience', 'Medium': 'Affects daily use', 'High': 'Unsafe or urgent'} %}
+          {% for p in priorities %}
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="priority" id="priority{{ p }}" value="{{ p }}" {{ 'checked' if form.priority == p }}>
+              <label class="form-check-label" for="priority{{ p }}">
+                <span class="priority-badge priority-{{ p|lower }}"><i class="bi bi-flag-fill"></i>{{ p }}</span>
+                <span class="text-muted small ms-1">— {{ hints[p] }}</span>
+              </label>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="form-section-title mb-2">Location</div>
+          <ul class="info-list">
+            <li><span class="label">Room</span><span class="value">{{ allocation.block }}-{{ allocation.room_number }}</span></li>
+            <li><span class="label">Floor</span><span class="value">{{ allocation.floor }}</span></li>
+            <li><span class="label">Your bed</span><span class="value">Bed {{ allocation.bed_number }}</span></li>
+          </ul>
+          <p class="text-muted small mb-0 mt-2">Filled in automatically from your allocation.</p>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary w-100 py-2"><i class="bi bi-send me-2"></i>Submit complaint</button>
+    </div>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/complaint-form.js') }}"></script>
+{% endblock %}

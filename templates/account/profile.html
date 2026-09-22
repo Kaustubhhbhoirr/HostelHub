@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}Profile{% endblock %}
+{% block topbar_title %}Account{% endblock %}
+
+{% block content %}
+{{ page_header('Profile & Settings', 'Your account details and password.') }}
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body text-center pt-4">
+        <div class="avatar avatar-lg mb-3">{{ g.user.name|initials }}</div>
+        <h5 class="mb-1">{{ g.user.name }}</h5>
+        <div class="text-muted small mb-3">{{ g.user.email }}</div>
+        <span class="status-badge status-active">{{ g.user.role|capitalize }}</span>
+      </div>
+      <div class="card-body pt-0">
+        <ul class="info-list">
+          {% if g.user.role == 'student' %}
+            <li><span class="label">Student ID</span><span class="value">{{ g.user.student_id }}</span></li>
+            <li><span class="label">Department</span><span class="value">{{ g.user.department or '—' }}</span></li>
+            <li><span class="label">Year of study</span><span class="value">{{ 'Year ' ~ g.user.year_of_study if g.user.year_of_study else '—' }}</span></li>
+            <li><span class="label">Room</span>
+              <span class="value">{% if allocation %}{{ allocation.block }}-{{ allocation.room_number }} · Bed {{ allocation.bed_number }}{% else %}Not allocated{% endif %}</span></li>
+          {% else %}
+            <li><span class="label">Role</span><span class="value">Hostel Warden</span></li>
+          {% endif %}
+          <li><span class="label">Phone</span><span class="value">{{ g.user.phone or '—' }}</span></li>
+          <li><span class="label">Member since</span><span class="value">{{ g.user.created_at|date }}</span></li>
+        </ul>
+        {% if g.user.role == 'student' %}
+          <p class="text-muted small mb-0 mt-2"><i class="bi bi-info-circle me-1"></i>Name, ID and department are managed by the hostel office.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card mb-3">
+      <div class="card-header"><h5 class="card-title">Contact number</h5></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('account.update_phone') }}" class="row g-2 align-items-end">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-sm-8">
+            <label class="form-label" for="phone">Mobile number</label>
+            <input type="tel" class="form-control" id="phone" name="phone" value="{{ g.user.phone or '' }}"
+                   pattern="[0-9]{10}" maxlength="10" placeholder="10-digit mobile number">
+          </div>
+          <div class="col-sm-4"><button class="btn btn-primary w-100" type="submit">Save</button></div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h5 class="card-title">Change password</h5></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('account.change_password') }}" class="row g-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-12">
+            <label class="form-label" for="current_password">Current password</label>
+            <input type="password" class="form-control" id="current_password" name="current_password" required autocomplete="current-password">
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label" for="new_password">New password</label>
+            <input type="password" class="form-control" id="new_password" name="new_password" minlength="8" required autocomplete="new-password">
+            <div class="form-text">At least 8 characters.</div>
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label" for="confirm_password">Confirm new password</label>
+            <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="8" required autocomplete="new-password">
+          </div>
+          <div class="col-12"><button class="btn btn-primary" type="submit">Update password</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

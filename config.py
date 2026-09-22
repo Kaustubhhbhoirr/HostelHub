@@ -1,0 +1,175 @@
+"""
+config.py — Application settings and fixed "choice lists".
+
+Everything that other files need to agree on (file paths, allowed
+complaint categories, status names, ...) lives here so it is defined
+in exactly one place.
+"""
+
+import os
+
+# Absolute path of the folder that contains this file (the project root).
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+# ------------------------------------------------------------------
+# Where is the app running?
+# ------------------------------------------------------------------
+# Environment variables are settings given to the program from OUTSIDE the
+# code (the terminal, or the Render / Vercel dashboard). Secrets live there, never in Git.
+#
+# Render automatically sets RENDER=true and Vercel sets VERCEL=1 on their servers,
+# so the app can never silently run in development mode there. HOSTELHUB_ENV=production
+# lets you test production behaviour on your own computer too.
+IS_PRODUCTION = (
+    os.environ.get("RENDER") == "true"
+    or os.environ.get("VERCEL") == "1"
+    or os.environ.get("HOSTELHUB_ENV") == "production"
+)
+
+# Fallback key for local development ONLY. Production refuses to start with it.
+DEV_SECRET_KEY = "dev-only-change-this-secret-key"
+
+
+class Config:
+    """Flask reads UPPERCASE attributes of this class as settings."""
+
+    IS_PRODUCTION = IS_PRODUCTION
+
+    # Used by Flask to sign the session cookie. In production this must be
+    # a long random value provided through an environment variable.
+    SECRET_KEY = os.environ.get("HOSTELHUB_SECRET_KEY") or DEV_SECRET_KEY
+
+    # Debug pages show source code and stack traces, so they are only allowed
+    # locally and only when explicitly requested with HOSTELHUB_DEBUG=1.
+    DEBUG = os.environ.get("HOSTELHUB_DEBUG") == "1" and not IS_PRODUCTION
+
+    # PostgreSQL connection string for deployment, e.g. postgresql://user:password@host:6543/postgres
+    # Empty (the default) means: use the local SQLite file below.
+    DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+    # SQLite database file (local development) and the SQL file that creates the tables.
+    DATABASE = os.path.join(BASE_DIR, "database", "hostelhub.db")
+    SCHEMA_FILE = os.path.join(BASE_DIR, "database", "schema.sql")
+
+    # Complaint photos (the database only stores the generated file name).
+    # LOCAL: saved in this folder, deliberately NOT inside /static.
+    UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads", "complaints")
+    # DEPLOYMENT: saved in a PRIVATE Supabase Storage bucket (see storage.py).
+    # Leave SUPABASE_URL empty to use the local folder.
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+    SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+    SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "").strip() or "complaint-photos"
+    # Either way, photos are only sent through a route that first checks who is
+    # asking (see complaint_image in routes/complaints.py).
+
+    # Flask rejects any request body bigger than 4 MB (returns error 413).
+    # Vercel refuses request bodies over 4.5 MB, so the limit stays below that.
+    MAX_CONTENT_LENGTH = 4 * 1024 * 1024
+
+    # Session cookie hardening: JavaScript cannot read the cookie, and modern
+    # browsers do not send it with most cross-site POST requests. This is only an
+    # EXTRA defence; the real CSRF protection is the token check in routes/auth.py.
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    # In production the site is served over HTTPS, so the cookie is never sent over plain HTTP.
+    SESSION_COOKIE_SECURE = IS_PRODUCTION
+
+    # Google sign-in (Firebase). Both are optional: without them the Google button is hidden.
+    #   FIREBASE_CLIENT_CONFIG   - PUBLIC web config (JSON), sent to the login page
+    #   FIREBASE_SERVICE_ACCOUNT - SECRET service-account key (JSON), used only on the server
+    #                              to verify Google sign-in tokens. Never commit it.
+    FIREBASE_CLIENT_CONFIG = os.environ.get("FIREBASE_CLIENT_CONFIG", "").strip()
+    FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
+
+
+def check_production_settings(settings):
+    """Return a list of configuration problems that make production unsafe.
+
+    `settings` is Flask's app.config (a dictionary). Locally this always
+    returns an empty list, so development needs no extra setup.
+    """
+    problems = []
+    if settings["IS_PRODUCTION"]:
+        if settings["SECRET_KEY"] == DEV_SECRET_KEY or len(settings["SECRET_KEY"]) < 32:
+            problems.append("HOSTELHUB_SECRET_KEY must be set to a random value of at least 32 characters.")
+        if settings["DEBUG"]:
+            problems.append("Debug mode must be off in production.")
+        # Render's and Vercel's file systems are temporary, so a SQLite file would lose data.
+        if not settings["DATABASE_URL"].startswith(("postgres://", "postgresql://")):
+            problems.append("DATABASE_URL must point to a hosted PostgreSQL database.")
+        # Photos saved in the host's temporary file system would disappear.
+        if not settings["SUPABASE_URL"].startswith("https://") or not settings["SUPABASE_SECRET_KEY"]:
+            problems.append("SUPABASE_URL (https://...) and SUPABASE_SECRET_KEY must be set for photo storage.")
+    return problems
+
+
+# ------------------------------------------------------------------
+# Choice lists used by forms, validation and templates
+# ------------------------------------------------------------------
+
+# MES college email rules:
+#   - every STUDENT account must end with @student.mes.ac.in (their college Google account)
+#   - staff such as the warden use @mes.ac.in
+# Only these two domains may sign in with Google.
+STUDENT_EMAIL_DOMAIN = "@student.mes.ac.in"
+STAFF_EMAIL_DOMAIN = "@mes.ac.in"
+COLLEGE_EMAIL_DOMAINS = (STUDENT_EMAIL_DOMAIN, STAFF_EMAIL_DOMAIN)
+
+# A set is used because we only need fast "is this extension allowed?" checks.
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+
+COMPLAINT_CATEGORIES = (
+    "Fan", "Light", "Electrical", "Plumbing", "Furniture",
+    "Bathroom", "Door/Lock", "Water", "Cleaning", "Other",
+)
+
+COMPLAINT_PRIORITIES = ("Low", "Medium", "High")
+
+COMPLAINT_STATUSES = ("Submitted", "Acknowledged", "In Progress", "Resolved", "Rejected")
+
+# Statuses that still need the warden's attention.
+OPEN_COMPLAINT_STATUSES = ("Submitted", "Acknowledged", "In Progress")
+
+# Which status a complaint may move to from its current status.
+# Resolved and Rejected are final, so they have no next statuses.
+COMPLAINT_NEXT_STATUSES = {
+    "Submitted": ["Acknowledged", "In Progress", "Resolved", "Rejected"],
+    "Acknowledged": ["In Progress", "Resolved", "Rejected"],
+    "In Progress": ["Resolved", "Rejected"],
+    "Resolved": [],
+    "Rejected": [],
+}
+
+ROOM_CHANGE_REASONS = (
+    "Roommate compatibility issue",
+    "Health or medical reason",
+    "Room maintenance problem",
+    "Want to stay closer to classmates",
+    "Need a quieter room for studies",
+    "Other",
+)
+
+ROOM_CHANGE_STATUSES = ("Pending", "Approved", "Rejected", "Cancelled")
+
+ROOM_STATUSES = ("active", "maintenance", "inactive")
+
+# Bed statuses a warden may set by hand. "occupied" and "reserved" are only
+# set by the allocation and room-change logic, never directly.
+MANUAL_BED_STATUSES = ("available", "maintenance", "unavailable")
+
+COLLEGE_REQUEST_TYPES = (
+    "Repair", "Replacement", "New Equipment", "Electrical Work",
+    "Plumbing Work", "Furniture Replacement", "Other",
+)
+
+COLLEGE_REQUEST_STATUSES = (
+    "Draft", "Sent to College", "Under Review", "Approved", "Rejected", "Completed",
+)
+
+DEPARTMENTS = (
+    "Computer Engineering",
+    "Information Technology",
+    "Electronics & Telecommunication",
+    "Mechanical Engineering",
+    "AI & Data Science",
+)

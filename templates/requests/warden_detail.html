@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, request_code %}
+{% block title %}{{ request_code(room_request.id) }}{% endblock %}
+{% block topbar_title %}Operations{% endblock %}
+
+{% block content %}
+{% set r = room_request %}
+<a href="{{ url_for('requests.warden_list') }}" class="breadcrumb-link"><i class="bi bi-arrow-left"></i>Room change requests</a>
+
+<div class="page-header">
+  <div>
+    <div class="d-flex align-items-center gap-2 mb-1"><h1 class="page-title">{{ request_code(r.id) }}</h1>{{ status_badge(r.status) }}</div>
+    <p class="page-subtitle">Submitted {{ r.created_at|datetime }}</p>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card mb-3">
+      <div class="card-body d-flex align-items-center gap-3">
+        <div class="avatar avatar-lg">{{ r.student_name|initials }}</div>
+        <div class="flex-grow-1">
+          <div class="fw-bold fs-5">{{ r.student_name }}</div>
+          <div class="text-muted">{{ r.roll_number }} · {{ r.department }} · Year {{ r.year_of_study }}</div>
+        </div>
+        <a href="{{ url_for('warden.student_detail', student_id=r.student_id) }}" class="btn btn-white btn-sm">Profile</a>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header"><h5 class="card-title">Requested move</h5></div>
+      <div class="card-body">
+        <div class="move-visual mb-4">
+          <div class="move-box"><small>Current</small>{{ r.current_block }}-{{ r.current_room_number }} · Bed {{ r.current_bed_number }}</div>
+          <i class="bi bi-arrow-right move-arrow"></i>
+          {% if r.requested_block %}
+            <div class="move-box"><small>Preferred</small>{{ r.requested_block }}-{{ r.requested_room_number }} · Bed {{ r.requested_bed_number }}
+              <span class="ms-1">{{ status_badge(r.requested_bed_status) }}</span></div>
+          {% else %}
+            <div class="move-box"><small>Preferred</small>No preference</div>
+          {% endif %}
+          {% if r.status == 'Approved' and r.assigned_block %}
+            <i class="bi bi-check2 move-arrow text-success"></i>
+            <div class="move-box" style="border-color:#86efac;background:#f0fdf4;"><small>Assigned</small>{{ r.assigned_block }}-{{ r.assigned_room_number }} · Bed {{ r.assigned_bed_number }}</div>
+          {% endif %}
+        </div>
+        <div class="small-caps mb-1">Reason</div>
+        <p class="fw-semibold">{{ r.reason }}</p>
+        <div class="small-caps mb-1">Additional information</div>
+        <p class="detail-description mb-0">{{ r.details or '—' }}</p>
+      </div>
+    </div>
+
+    {% if r.warden_remarks and r.status != 'Pending' %}
+      <div class="card">
+        <div class="card-header"><h5 class="card-title">Decision remarks</h5></div>
+        <div class="card-body"><div class="remark-box">{{ r.warden_remarks }}</div><div class="text-muted small mt-2">Decided {{ r.updated_at|datetime }}</div></div>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-5">
+    {% if r.status == 'Pending' %}
+      <div class="card">
+        <div class="card-header"><h5 class="card-title">Decision</h5></div>
+        <div class="card-body">
+          {# One form, two submit buttons: the clicked button's name/value ("action") tells Flask what to do. #}
+          <form method="post" action="{{ url_for('requests.warden_decide', request_id=r.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="form-label" for="bed_id">Move student to</label>
+            <select class="form-select mb-1" id="bed_id" name="bed_id">
+              {% for block, beds in beds_by_block.items() %}
+                <optgroup label="Block {{ block }}">
+                  {% for bed in beds %}
+                    <option value="{{ bed.id }}" {{ 'selected' if bed.id == r.requested_bed_id }}>
+                      {{ bed.block }}-{{ bed.room_number }} · Bed {{ bed.bed_number }}{{ '  ★ requested' if bed.id == r.requested_bed_id }}
+                    </option>
+                  {% endfor %}
+                </optgroup>
+              {% else %}
+                <option value="">No beds available</option>
+              {% endfor %}
+            </select>
+            <div class="form-text mb-3">Used only when approving. {{ beds_by_block.values()|map('length')|sum }} bed(s) can be assigned.</div>
+
+            <label class="form-label" for="remarks">Remarks</label>
+            <textarea class="form-control mb-1" id="remarks" name="remarks" rows="3" maxlength="500" placeholder="Visible to the student"></textarea>
+            <div class="form-text mb-3">Required when rejecting.</div>
+
+            <div class="d-flex gap-2">
+              <button type="submit" name="action" value="reject" class="btn btn-outline-danger flex-fill"
+                      data-confirm="Reject this request? The student will be notified." data-confirm-button="Reject">
+                <i class="bi bi-x-lg me-1"></i>Reject
+              </button>
+              <button type="submit" name="action" value="approve" class="btn btn-success flex-fill"
+                      data-confirm="Approve and move the student now? Their old bed will become available." data-confirm-button="Approve & move">
+                <i class="bi bi-check2 me-1"></i>Approve
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {% else %}
+      <div class="card">
+        <div class="card-body text-center py-4">
+          <div class="empty-icon"><i class="bi bi-check2-all"></i></div>
+          <h6 class="fw-bold">This request is {{ r.status|lower }}</h6>
+          <p class="text-muted small mb-0">Last updated {{ r.updated_at|datetime }}.</p>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

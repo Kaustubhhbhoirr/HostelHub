@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, priority_badge, complaint_code, college_code %}
+{# One template for both roles. The warden sees an extra "Manage" panel. #}
+{% set is_warden = g.user.role == 'warden' %}
+{% block title %}{{ complaint_code(complaint.id) }}{% endblock %}
+{% block topbar_title %}{{ 'Maintenance' if is_warden else 'Student Portal' }}{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('complaints.warden_list' if is_warden else 'complaints.student_list') }}" class="breadcrumb-link">
+  <i class="bi bi-arrow-left"></i>{{ 'Complaints' if is_warden else 'My complaints' }}
+</a>
+
+<div class="page-header">
+  <div>
+    <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+      <h1 class="page-title">{{ complaint.category }} issue</h1>
+      {{ status_badge(complaint.status) }}
+    </div>
+    <p class="page-subtitle">{{ complaint_code(complaint.id) }} · Room {{ complaint.block }}-{{ complaint.room_number }} · reported {{ complaint.created_at|timeago }}</p>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    {# ---------- Progress tracker ---------- #}
+    <div class="card mb-3">
+      <div class="card-body">
+        {% set done = steps|selectattr('state', 'in', ['done', 'rejected'])|list|length %}
+        {% set current = steps|selectattr('state', 'equalto', 'current')|list|length %}
+        <div class="progress-steps">
+          <div class="fill" style="width: {{ (((done + current - 1) / (steps|length - 1)) * 84) if steps|length > 1 else 0 }}%;"></div>
+          {% for step in steps %}
+            <div class="step {{ step.state }}">
+              <div class="step-dot">
+                {% if step.state == 'done' %}<i class="bi bi-check-lg"></i>{% elif step.state == 'rejected' %}<i class="bi bi-x-lg"></i>{% else %}{{ loop.index }}{% endif %}
+              </div>
+              <div class="step-label">{{ step.label }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    {# ---------- Description + photo ---------- #}
+    <div class="card mb-3">
+      <div class="card-header"><h5 class="card-title">Description</h5>{{ priority_badge(complaint.priority) }}</div>
+      <div class="card-body">
+        <p class="detail-description mb-0">{{ complaint.description }}</p>
+        {% if image_available %}
+          <div class="small-caps mt-4 mb-2">Attached photo</div>
+          {# The photo comes from a protected route, not a public /static URL. #}
+          <img src="{{ url_for('complaints.complaint_image', complaint_id=complaint.id) }}"
+               alt="Photo attached to the {{ complaint.category|lower }} complaint"
+               class="complaint-image" data-bs-toggle="modal" data-bs-target="#imageModal">
+        {% elif complaint.image_path %}
+          <div class="small-caps mt-4 mb-2">Attached photo</div>
+          <p class="text-muted small mb-0"><i class="bi bi-image me-1"></i>The photo for this complaint is no longer available.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ---------- Warden remarks ---------- #}
+    <div class="card">
+      <div class="card-header"><h5 class="card-title">Warden remarks</h5></div>
+      <div class="card-body">
+        {% if complaint.warden_remarks %}
+          <div class="remark-box">{{ complaint.warden_remarks }}</div>
+          <div class="text-muted small mt-2">Last updated {{ complaint.updated_at|datetime }}</div>
+        {% else %}
+          <p class="text-muted mb-0">No remarks yet.{% if not is_warden %} You'll be notified when the warden responds.{% endif %}</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    {# ---------- Warden actions ---------- #}
+    {% if is_warden %}
+      <div class="card mb-3">
+        <div class="card-header"><h5 class="card-title">Manage complaint</h5></div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('complaints.warden_update', complaint_id=complaint.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="form-label" for="status">Status</label>
+            <select class="form-select mb-3" id="status" name="status" {{ 'disabled' if not next_statuses }}>
+              <option value="{{ complaint.status }}" selected>{{ complaint.status }} (current)</option>
+              {% for s in next_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+            </select>
+            {% if not next_statuses %}
+              <input type="hidden" name="status" value="{{ complaint.status }}">
+              <p class="form-text mt-n2 mb-3">This complaint is closed. You can still edit the remarks.</p>
+            {% endif %}
+            <label class="form-label" for="remarks">Remarks for the student</label>
+            <textarea class="form-control mb-1" id="remarks" name="remarks" rows="4" maxlength="500"
+                      placeholder="e.g. Electrician will visit tomorrow at 10 AM.">{{ complaint.warden_remarks or '' }}</textarea>
+            <div class="form-text mb-3">Required when rejecting. The student is notified of every update.</div>
+            <button type="submit" class="btn btn-primary w-100">Save update</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header"><h5 class="card-title">College escalation</h5></div>
+        <div class="card-body">
+          {% if escalation %}
+            <a href="{{ url_for('college.request_detail', request_id=escalation.id) }}" class="action-item pt-0">
+              <span class="action-icon tone-blue"><i class="bi bi-bank"></i></span>
+              <span class="min-w-0"><span class="action-title d-block">{{ college_code(escalation.id) }}</span><span class="cell-sub d-block">{{ escalation.request_type }} · {{ escalation.asset }}</span></span>
+              <span class="ms-auto">{{ status_badge(escalation.status) }}</span>
+            </a>
+          {% else %}
+            <p class="text-muted small">Needs replacement parts or work the hostel cannot do? Send a formal request to the college.</p>
+            <a href="{{ url_for('college.request_new', complaint_id=complaint.id) }}" class="btn btn-white w-100"><i class="bi bi-bank me-2"></i>Escalate to college</a>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
+    {# ---------- Details ---------- #}
+    <div class="card">
+      <div class="card-header"><h5 class="card-title">Details</h5></div>
+      <div class="card-body py-2">
+        <ul class="info-list">
+          {% if is_warden %}
+            <li><span class="label">Student</span><span class="value"><a href="{{ url_for('warden.student_detail', student_id=complaint.student_id) }}">{{ complaint.student_name }}</a></span></li>
+            <li><span class="label">Student ID</span><span class="value">{{ complaint.roll_number }}</span></li>
+            <li><span class="label">Phone</span><span class="value">{{ complaint.student_phone or '—' }}</span></li>
+          {% endif %}
+          <li><span class="label">Room</span><span class="value">{{ complaint.block }}-{{ complaint.room_number }} (Floor {{ complaint.floor }})</span></li>
+          <li><span class="label">Category</span><span class="value">{{ complaint.category }}</span></li>
+          <li><span class="label">Priority</span><span class="value">{{ priority_badge(complaint.priority) }}</span></li>
+          <li><span class="label">Created</span><span class="value">{{ complaint.created_at|datetime }}</span></li>
+          <li><span class="label">Last updated</span><span class="value">{{ complaint.updated_at|datetime }}</span></li>
+          {% if complaint.resolved_at %}<li><span class="label">Resolved</span><span class="value">{{ complaint.resolved_at|datetime }}</span></li>{% endif %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if image_available %}
+<div class="modal fade" id="imageModal" tabindex="-1" aria-label="Complaint photo" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content bg-transparent shadow-none">
+      <div class="text-end mb-2"><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button></div>
+      <img src="{{ url_for('complaints.complaint_image', complaint_id=complaint.id) }}"
+           alt="Photo attached to the {{ complaint.category|lower }} complaint" class="img-fluid rounded-4">
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

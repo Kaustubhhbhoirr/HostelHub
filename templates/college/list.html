@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, priority_badge, empty_state, college_code %}
+{% block title %}College Requests{% endblock %}
+{% block topbar_title %}Operations{% endblock %}
+
+{% block content %}
+{% call page_header('College maintenance requests', 'Repairs and replacements escalated to the college administration.') %}
+  <a href="{{ url_for('college.request_new') }}" class="btn btn-primary"><i class="bi bi-plus-lg me-2"></i>New request</a>
+{% endcall %}
+
+<div class="card table-card">
+  <div class="filter-bar">
+    <div class="status-tabs">
+      <a href="{{ url_for('college.request_list') }}" class="status-tab {{ 'active' if not status }}">All <span class="count">{{ counts.values()|sum }}</span></a>
+      {% for s in statuses %}
+        <a href="{{ url_for('college.request_list', status=s) }}" class="status-tab {{ 'active' if status == s }}">{{ s }} <span class="count">{{ counts.get(s, 0) }}</span></a>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if college_requests %}
+  <div class="table-responsive">
+    <table class="table table-hover">
+      <thead><tr><th>Reference</th><th>Asset</th><th>Location</th><th>Type</th><th>Qty</th><th>Priority</th><th>Status</th><th>Updated</th></tr></thead>
+      <tbody>
+        {% for cr in college_requests %}
+          <tr data-href="{{ url_for('college.request_detail', request_id=cr.id) }}">
+            <td class="cell-title text-nowrap">{{ college_code(cr.id) }}</td>
+            <td><div class="cell-title">{{ cr.asset }}</div>{% if cr.complaint_id %}<div class="cell-sub"><i class="bi bi-link-45deg"></i>From complaint</div>{% endif %}</td>
+            <td class="text-muted">{{ cr.location }}</td>
+            <td>{{ cr.request_type }}</td>
+            <td>{{ cr.quantity }}</td>
+            <td>{{ priority_badge(cr.priority) }}</td>
+            <td>{{ status_badge(cr.status) }}</td>
+            <td class="text-muted small text-nowrap">{{ cr.updated_at|date }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    {{ empty_state('bi-bank', 'No requests', 'Create a request when a repair or replacement needs college approval.', url_for('college.request_new'), 'New request') }}
+  {% endif %}
+</div>
+{% endblock %}

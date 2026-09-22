@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, empty_state %}
+{% block title %}My Room{% endblock %}
+{% block topbar_title %}Student Portal{% endblock %}
+
+{% block content %}
+{% call page_header('My Room', 'Your current hostel allocation and roommates.') %}
+  {% if allocation %}
+    <a href="{{ url_for('requests.student_new') }}" class="btn btn-white"><i class="bi bi-arrow-left-right me-2"></i>Request change</a>
+    <a href="{{ url_for('complaints.student_new') }}" class="btn btn-primary"><i class="bi bi-exclamation-triangle me-2"></i>Report issue</a>
+  {% endif %}
+{% endcall %}
+
+{% if not allocation %}
+  <div class="card">
+    {{ empty_state('bi-door-closed', 'No room allocated yet', 'The warden has not assigned you a bed yet. You will get a notification as soon as a bed is allocated.') }}
+  </div>
+{% else %}
+<div class="row g-3">
+  {# ---------- Visual floor plan of the student's own room ---------- #}
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header">
+        <div>
+          <h5 class="card-title">Room {{ allocation.block }}-{{ allocation.room_number }}</h5>
+          <div class="text-muted small">Block {{ allocation.block }} · Floor {{ allocation.floor }} · {{ allocation.capacity }}-seater</div>
+        </div>
+        {{ status_badge(allocation.room_status) }}
+      </div>
+      <div class="card-body">
+        <div class="legend justify-content-center mb-4">
+          <span class="legend-item"><span class="legend-swatch mine"></span>Your bed</span>
+          <span class="legend-item"><span class="legend-swatch occupied"></span>Occupied</span>
+          <span class="legend-item"><span class="legend-swatch available"></span>Available</span>
+          <span class="legend-item"><span class="legend-swatch reserved"></span>Reserved</span>
+          <span class="legend-item"><span class="legend-swatch maintenance"></span>Maintenance</span>
+        </div>
+
+        {# Bed colours come from the beds.status column in the database. #}
+        <div class="room-floor-plan room-plan-lg">
+          <div class="bed-grid {{ 'single' if beds|length == 1 }}">
+            {% for bed in beds %}
+              {% set is_mine = bed.id == allocation.bed_id %}
+              <div class="bed bed-{{ bed.status }} {{ 'bed-mine' if is_mine }}">
+                {% if is_mine %}<span class="you-tag">YOU</span>{% endif %}
+                <i class="bi {{ 'bi-person-fill' if bed.status == 'occupied' else 'bi-wrench' if bed.status == 'maintenance' else 'bi-hourglass-split' if bed.status == 'reserved' else 'bi-plus-lg' }} bed-icon"></i>
+                <span class="bed-number">Bed {{ bed.bed_number }}</span>
+                <span class="bed-occupant">
+                  {% if is_mine %}{{ g.user.name.split()[0] }}{% elif bed.occupant_name %}{{ bed.occupant_name.split()[0] }}{% else %}{{ bed.status|capitalize }}{% endif %}
+                </span>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ---------- Allocation details + roommates ---------- #}
+  <div class="col-lg-5">
+    <div class="card mb-3">
+      <div class="card-header"><h5 class="card-title">Allocation details</h5></div>
+      <div class="card-body py-2">
+        <ul class="info-list">
+          <li><span class="label">Hostel block</span><span class="value">Block {{ allocation.block }}</span></li>
+          <li><span class="label">Floor</span><span class="value">{{ allocation.floor }}</span></li>
+          <li><span class="label">Room number</span><span class="value">{{ allocation.block }}-{{ allocation.room_number }}</span></li>
+          <li><span class="label">Your bed</span><span class="value">Bed {{ allocation.bed_number }}</span></li>
+          <li><span class="label">Room capacity</span><span class="value">{{ allocation.capacity }} students</span></li>
+          <li><span class="label">Occupied beds</span><span class="value">{{ bed_counts.get('occupied', 0) }} of {{ beds|length }}</span></li>
+          <li><span class="label">Allocated on</span><span class="value">{{ allocation.allocated_at|date }}</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h5 class="card-title">Roommates</h5>
+        <span class="badge rounded-pill text-bg-light">{{ roommates|length }}</span>
+      </div>
+      {% for mate in roommates %}
+        <div class="d-flex align-items-center gap-3 px-3 py-3 {{ 'border-bottom' if not loop.last }}">
+          <div class="avatar">{{ mate.name|initials }}</div>
+          <div class="flex-grow-1 min-w-0">
+            <div class="fw-semibold">{{ mate.name }}</div>
+            <div class="text-muted small text-truncate">{{ mate.department }} · Year {{ mate.year_of_study }}</div>
+          </div>
+          <span class="badge rounded-pill text-bg-light">Bed {{ mate.bed_number }}</span>
+        </div>
+      {% else %}
+        {{ empty_state('bi-person', 'No roommates yet', 'You currently have the room to yourself.') }}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

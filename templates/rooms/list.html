@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, empty_state %}
+{% block title %}Rooms{% endblock %}
+{% block topbar_title %}Hostel Management{% endblock %}
+
+{% block content %}
+{% call page_header('Rooms', rooms|length ~ ' rooms') %}
+  <a href="{{ url_for('rooms.bed_map') }}" class="btn btn-white"><i class="bi bi-grid-3x3-gap me-2"></i>Allocation map</a>
+  <a href="{{ url_for('rooms.room_new') }}" class="btn btn-primary"><i class="bi bi-plus-lg me-2"></i>Add room</a>
+{% endcall %}
+
+<div class="card table-card">
+  <form class="filter-bar" method="get" data-no-loading>
+    <div class="search-input">
+      <i class="bi bi-search"></i>
+      <input type="search" class="form-control" name="q" value="{{ search }}" placeholder="Search room, e.g. A-204" aria-label="Search rooms">
+    </div>
+    <select name="block" class="form-select w-auto" aria-label="Block" onchange="this.form.submit()">
+      <option value="">All blocks</option>
+      {% for b in blocks %}<option value="{{ b }}" {{ 'selected' if b == block }}>Block {{ b }}</option>{% endfor %}
+    </select>
+    <select name="status" class="form-select w-auto" aria-label="Status" onchange="this.form.submit()">
+      <option value="">Any status</option>
+      {% for s in room_statuses %}<option value="{{ s }}" {{ 'selected' if s == status }}>{{ s|capitalize }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-primary" type="submit">Search</button>
+    {% if search or block or status %}<a href="{{ url_for('rooms.room_list') }}" class="btn btn-light">Clear</a>{% endif %}
+  </form>
+
+  {% if rooms %}
+  <div class="table-responsive">
+    <table class="table table-hover">
+      <thead><tr><th>Room</th><th>Floor</th><th>Capacity</th><th style="min-width: 180px;">Occupancy</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+      <tbody>
+        {% for r in rooms %}
+          {% set pct = ((r.occupied or 0) * 100 / r.bed_count)|round|int if r.bed_count else 0 %}
+          <tr>
+            <td><div class="cell-title">{{ r.block }}-{{ r.room_number }}</div><div class="cell-sub">Block {{ r.block }}</div></td>
+            <td>{{ 'Ground' if r.floor == 0 else r.floor }}</td>
+            <td>{{ r.capacity }} beds</td>
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <div class="bar-track flex-grow-1"><div class="bar-fill" style="width: {{ pct }}%;"></div></div>
+                <span class="small text-muted text-nowrap">{{ r.occupied or 0 }}/{{ r.bed_count }}</span>
+              </div>
+              <div class="cell-sub">{{ r.available or 0 }} free</div>
+            </td>
+            <td>{{ status_badge(r.status) }}</td>
+            <td class="text-end text-nowrap">
+              <a href="{{ url_for('rooms.bed_map', block=r.block, floor=r.floor) }}" class="btn btn-sm btn-light" title="View on map"><i class="bi bi-grid-3x3-gap"></i></a>
+              <a href="{{ url_for('rooms.room_edit', room_id=r.id) }}" class="btn btn-sm btn-light" title="Edit"><i class="bi bi-pencil"></i></a>
+              <form method="post" action="{{ url_for('rooms.room_delete', room_id=r.id) }}" class="d-inline"
+                    data-confirm="Delete room {{ r.block }}-{{ r.room_number }} and its beds? Rooms with history cannot be deleted." data-confirm-button="Delete">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-light text-danger" title="Delete"><i class="bi bi-trash3"></i></button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    {{ empty_state('bi-building', 'No rooms found', 'No rooms match these filters.', url_for('rooms.room_new'), 'Add room') }}
+  {% endif %}
+</div>
+{% endblock %}

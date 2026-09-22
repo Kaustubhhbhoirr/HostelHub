@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, priority_badge, college_code, complaint_code %}
+{% block title %}{{ college_code(college_request.id) }}{% endblock %}
+{% block topbar_title %}Operations{% endblock %}
+
+{% block content %}
+{% set cr = college_request %}
+<a href="{{ url_for('college.request_list') }}" class="breadcrumb-link"><i class="bi bi-arrow-left"></i>College requests</a>
+
+<div class="page-header">
+  <div>
+    <div class="d-flex align-items-center gap-2 mb-1"><h1 class="page-title">{{ cr.request_type }}: {{ cr.asset }}</h1>{{ status_badge(cr.status) }}</div>
+    <p class="page-subtitle">{{ college_code(cr.id) }} · raised by {{ cr.warden_name }} on {{ cr.created_at|date }}</p>
+  </div>
+  <div class="page-actions">
+    {% if cr.status == 'Draft' %}
+      <a href="{{ url_for('college.request_edit', request_id=cr.id) }}" class="btn btn-white"><i class="bi bi-pencil me-2"></i>Edit draft</a>
+      <form method="post" action="{{ url_for('college.request_delete', request_id=cr.id) }}" data-confirm="Delete this draft request?" data-confirm-button="Delete">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash3 me-2"></i>Delete</button>
+      </form>
+    {% endif %}
+    <button type="button" class="btn btn-white" onclick="window.print()"><i class="bi bi-printer me-2"></i>Print</button>
+  </div>
+</div>
+
+{# Status progress for the formal request #}
+{% set flow = ['Draft', 'Sent to College', 'Under Review', 'Approved', 'Completed'] %}
+{% set position = flow.index(cr.status) if cr.status in flow else 2 %}
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="progress-steps">
+      <div class="fill" style="width: {{ (position / (flow|length - 1)) * 84 }}%;"></div>
+      {% for s in flow %}
+        {% if cr.status == 'Rejected' and s == 'Approved' %}
+          <div class="step rejected"><div class="step-dot"><i class="bi bi-x-lg"></i></div><div class="step-label">Rejected</div></div>
+        {% else %}
+          <div class="step {{ 'done' if loop.index0 < position or cr.status == 'Completed' else 'current' if loop.index0 == position else '' }}">
+            <div class="step-dot">{% if loop.index0 < position or cr.status == 'Completed' %}<i class="bi bi-check-lg"></i>{% else %}{{ loop.index }}{% endif %}</div>
+            <div class="step-label">{{ s }}</div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card document-card">
+      <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-start mb-4">
+          <div>
+            <div class="small-caps">Hostel maintenance request</div>
+            <h4 class="mb-0 mt-1">{{ college_code(cr.id) }}</h4>
+          </div>
+          {{ priority_badge(cr.priority) }}
+        </div>
+        <div class="row g-4 mb-4">
+          <div class="col-sm-4"><div class="doc-field-label">Request type</div><div class="doc-field-value">{{ cr.request_type }}</div></div>
+          <div class="col-sm-4"><div class="doc-field-label">Asset</div><div class="doc-field-value">{{ cr.asset }}</div></div>
+          <div class="col-sm-4"><div class="doc-field-label">Quantity</div><div class="doc-field-value">{{ cr.quantity }}</div></div>
+          <div class="col-sm-8"><div class="doc-field-label">Location</div><div class="doc-field-value">{{ cr.location }}</div></div>
+          <div class="col-sm-4"><div class="doc-field-label">Related complaint</div>
+            <div class="doc-field-value">{% if cr.complaint_id %}<a href="{{ url_for('complaints.warden_detail', complaint_id=cr.complaint_id) }}">{{ complaint_code(cr.complaint_id) }}</a>{% else %}—{% endif %}</div>
+          </div>
+        </div>
+        <div class="doc-field-label">Description</div>
+        <p class="detail-description">{{ cr.description }}</p>
+        <div class="row g-4 pt-3 border-top">
+          <div class="col-sm-6"><div class="doc-field-label">Requested by</div><div class="doc-field-value">{{ cr.warden_name }}, Hostel Warden</div></div>
+          <div class="col-sm-6"><div class="doc-field-label">Last updated</div><div class="doc-field-value">{{ cr.updated_at|datetime }}</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card mb-3">
+      <div class="card-header"><h5 class="card-title">College response</h5></div>
+      <div class="card-body">
+        {% if cr.college_remarks %}<div class="remark-box mb-3">{{ cr.college_remarks }}</div>{% endif %}
+        <form method="post" action="{{ url_for('college.request_status', request_id=cr.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="form-label" for="status">Status</label>
+          <select class="form-select mb-3" id="status" name="status">
+            {% for s in statuses if s != 'Draft' or cr.status == 'Draft' %}<option {{ 'selected' if cr.status == s }}>{{ s }}</option>{% endfor %}
+          </select>
+          <label class="form-label" for="college_remarks">College remarks</label>
+          <textarea class="form-control mb-1" id="college_remarks" name="college_remarks" rows="3" placeholder="Record the reply from the college office">{{ cr.college_remarks or '' }}</textarea>
+          <div class="form-text mb-3">There is no college login yet, so the warden records the college's response here.</div>
+          <button class="btn btn-primary w-100" type="submit">Update status</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

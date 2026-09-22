@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}{{ 'Add student' if is_new else 'Edit student' }}{% endblock %}
+{% block topbar_title %}Hostel Management{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('warden.student_list') if is_new else url_for('warden.student_detail', student_id=student.id) }}" class="breadcrumb-link">
+  <i class="bi bi-arrow-left"></i>{{ 'Students' if is_new else student.name }}
+</a>
+{{ page_header('Add student' if is_new else 'Edit student', 'Create a hostel account for a student.' if is_new else 'Update the student\'s details.') }}
+
+<div class="row">
+  <div class="col-xl-8">
+    <form method="post" class="card" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="card-body">
+        <div class="form-section-title">Personal details</div>
+        <p class="form-section-text">The email must be the student's official college address.</p>
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label" for="name">Full name</label>
+            <input class="form-control" id="name" name="name" value="{{ student.name or '' }}" required minlength="3" placeholder="e.g. Rohan Patil">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="email">College email</label>
+            <input type="email" class="form-control" id="email" name="email" value="{{ student.email or '' }}" required placeholder="name@student.mes.ac.in">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="phone">Phone <span class="text-muted fw-normal">(optional)</span></label>
+            <input type="tel" class="form-control" id="phone" name="phone" value="{{ student.phone or '' }}" maxlength="10" pattern="[0-9]{10}" placeholder="10-digit number">
+          </div>
+        </div>
+
+        <div class="form-section-title">Academic details</div>
+        <p class="form-section-text">Used to identify the student in hostel records.</p>
+        <div class="row g-3 mb-4">
+          <div class="col-md-4">
+            <label class="form-label" for="student_id">Student ID</label>
+            <input class="form-control text-uppercase" id="student_id" name="student_id" value="{{ student.student_id or '' }}" required placeholder="e.g. 25CE014">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label" for="department">Department</label>
+            <select class="form-select" id="department" name="department" required>
+              <option value="">Choose…</option>
+              {% for d in departments %}<option {{ 'selected' if student.department == d }}>{{ d }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="year_of_study">Year</label>
+            <select class="form-select" id="year_of_study" name="year_of_study" required>
+              <option value="">Choose…</option>
+              {% for y in range(1, 5) %}<option value="{{ y }}" {{ 'selected' if student.year_of_study|string == y|string }}>Year {{ y }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-section-title">{{ 'Login password' if is_new else 'Reset password' }}</div>
+        <p class="form-section-text">{{ 'The student will use this to log in. They can change it from their profile.' if is_new else 'Leave blank to keep the current password.' }}</p>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="password">Password</label>
+            <input type="password" class="form-control" id="password" name="password" minlength="8" {{ 'required' if is_new }} autocomplete="new-password" placeholder="At least 8 characters">
+          </div>
+        </div>
+      </div>
+      <div class="card-body border-top d-flex gap-2 justify-content-end">
+        <a href="{{ url_for('warden.student_list') if is_new else url_for('warden.student_detail', student_id=student.id) }}" class="btn btn-light">Cancel</a>
+        <button type="submit" class="btn btn-primary">{{ 'Create student' if is_new else 'Save changes' }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

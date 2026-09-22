@@ -1,0 +1,173 @@
+<!doctype html>
+{# base.html — the layout every page extends with {% extends "base.html" %}.
+   Logged-in users get the sidebar + top bar; the login page gets a blank canvas. #}
+{% from "_macros.html" import nav_link %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}HostelHub{% endblock %} · HostelHub</title>
+  <link rel="icon" href="{{ url_for('static', filename='images/logo.svg') }}" type="image/svg+xml">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+
+{% if g.user %}
+<div class="app-shell">
+
+  {# ---------------- Sidebar (off-canvas drawer on small screens) ---------------- #}
+  <aside class="sidebar offcanvas-lg offcanvas-start" tabindex="-1" id="sidebar" aria-label="Main navigation">
+    <div class="sidebar-brand">
+      <a href="{{ url_for('index') }}" class="brand-link">
+        <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="" width="34" height="34">
+        <span>Hostel<strong>Hub</strong></span>
+      </a>
+      <button type="button" class="btn-close btn-close-white d-lg-none" data-bs-dismiss="offcanvas"
+              data-bs-target="#sidebar" aria-label="Close menu"></button>
+    </div>
+
+    <nav class="sidebar-nav">
+      {% if g.user.role == 'student' %}
+        <div class="nav-section">Overview</div>
+        {{ nav_link('student.dashboard', 'student.dashboard', 'bi-grid-1x2', 'Dashboard') }}
+        {{ nav_link('student.my_room', 'student.my_room', 'bi-door-open', 'My Room') }}
+        <div class="nav-section">Services</div>
+        {{ nav_link('complaints.student_list', 'complaints.student_', 'bi-tools', 'My Complaints') }}
+        {{ nav_link('requests.student_list', 'requests.student_', 'bi-arrow-left-right', 'Room Change') }}
+        <div class="nav-section">Account</div>
+        {{ nav_link('account.notifications', 'account.notifications', 'bi-bell', 'Notifications', unread_count) }}
+        {{ nav_link('account.profile', 'account.profile', 'bi-person-circle', 'Profile') }}
+      {% else %}
+        <div class="nav-section">Overview</div>
+        {{ nav_link('warden.dashboard', 'warden.dashboard', 'bi-grid-1x2', 'Dashboard') }}
+        <div class="nav-section">Hostel</div>
+        {{ nav_link('rooms.bed_map', 'rooms.bed_', 'bi-grid-3x3-gap', 'Allocation Map') }}
+        {{ nav_link('warden.student_list', 'warden.student_', 'bi-people', 'Students') }}
+        {{ nav_link('rooms.room_list', 'rooms.room_', 'bi-building', 'Rooms') }}
+        <div class="nav-section">Operations</div>
+        {{ nav_link('complaints.warden_list', 'complaints.warden_', 'bi-tools', 'Complaints', nav_counts.complaints) }}
+        {{ nav_link('requests.warden_list', 'requests.warden_', 'bi-arrow-left-right', 'Room Requests', nav_counts.requests) }}
+        {{ nav_link('college.request_list', 'college.', 'bi-bank', 'College Requests') }}
+        <div class="nav-section">Account</div>
+        {{ nav_link('account.notifications', 'account.notifications', 'bi-bell', 'Notifications', unread_count) }}
+        {{ nav_link('account.profile', 'account.profile', 'bi-gear', 'Profile & Settings') }}
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="avatar avatar-sm">{{ g.user.name|initials }}</div>
+      <div class="flex-grow-1 text-truncate">
+        <div class="sidebar-user-name text-truncate">{{ g.user.name }}</div>
+        <div class="sidebar-user-role">{{ g.user.role|capitalize }}</div>
+      </div>
+      <form action="{{ url_for('auth.logout') }}" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-icon btn-sidebar" title="Log out" aria-label="Log out">
+          <i class="bi bi-box-arrow-right"></i>
+        </button>
+      </form>
+    </div>
+  </aside>
+
+  {# ---------------- Main column ---------------- #}
+  <div class="app-main">
+    <header class="topbar">
+      <button class="btn btn-icon d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebar"
+              aria-controls="sidebar" aria-label="Open menu">
+        <i class="bi bi-list fs-4"></i>
+      </button>
+      <div class="topbar-title">{% block topbar_title %}{% endblock %}</div>
+
+      <div class="ms-auto d-flex align-items-center gap-2">
+        {# Notification bell: shows the 5 latest notifications from the database #}
+        <div class="dropdown">
+          <button class="btn btn-icon position-relative" type="button" data-bs-toggle="dropdown"
+                  aria-expanded="false" aria-label="Notifications">
+            <i class="bi bi-bell fs-5"></i>
+            {% if unread_count %}<span class="bell-dot">{{ unread_count if unread_count < 10 else '9+' }}</span>{% endif %}
+          </button>
+          <div class="dropdown-menu dropdown-menu-end notif-dropdown shadow">
+            <div class="notif-dropdown-header">
+              <span class="fw-semibold">Notifications</span>
+              {% if unread_count %}<span class="badge rounded-pill text-bg-primary">{{ unread_count }} new</span>{% endif %}
+            </div>
+            {% for n in latest_notifications %}
+              <a class="notif-item {{ 'unread' if not n.is_read }}" href="{{ url_for('account.open_notification', notification_id=n.id) }}">
+                <span class="notif-icon notif-{{ n.type }}"><i class="bi {{ {'complaint':'bi-tools','room_request':'bi-arrow-left-right','college':'bi-bank','allocation':'bi-door-open'}.get(n.type, 'bi-info-circle') }}"></i></span>
+                <span class="flex-grow-1 min-w-0">
+                  <span class="notif-title">{{ n.title }}</span>
+                  <span class="notif-text">{{ n.message }}</span>
+                  <span class="notif-time">{{ n.created_at|timeago }}</span>
+                </span>
+              </a>
+            {% else %}
+              <div class="text-center text-muted small py-4">You're all caught up.</div>
+            {% endfor %}
+            <a class="notif-dropdown-footer" href="{{ url_for('account.notifications') }}">View all notifications</a>
+          </div>
+        </div>
+
+        <div class="dropdown">
+          <button class="btn btn-user" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <span class="avatar avatar-sm">{{ g.user.name|initials }}</span>
+            <span class="d-none d-md-inline fw-semibold">{{ g.user.name.split()[0] if not g.user.name.startswith('Dr.') else g.user.name }}</span>
+            <i class="bi bi-chevron-down small text-muted"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow">
+            <li class="px-3 py-2 small">
+              <div class="fw-semibold">{{ g.user.name }}</div>
+              <div class="text-muted">{{ g.user.email }}</div>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="{{ url_for('account.profile') }}"><i class="bi bi-person me-2"></i>Profile</a></li>
+            <li>
+              <form action="{{ url_for('auth.logout') }}" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="dropdown-item text-danger" type="submit"><i class="bi bi-box-arrow-right me-2"></i>Log out</button>
+              </form>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </header>
+
+    <main class="page-content">
+      {% include "_flashes.html" %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+{% else %}
+  {# Pages for logged-out visitors (login, errors) #}
+  {% block public_content %}{% endblock %}
+{% endif %}
+
+{# One reusable confirmation dialog. Any form with data-confirm="..." uses it (see main.js). #}
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content">
+      <div class="modal-body text-center p-4">
+        <div class="confirm-icon"><i class="bi bi-exclamation-lg"></i></div>
+        <h5 class="modal-title mb-2" id="confirmModalTitle">Are you sure?</h5>
+        <p class="text-muted mb-0" data-confirm-message></p>
+      </div>
+      <div class="modal-footer border-0 pt-0 px-4 pb-4">
+        <button type="button" class="btn btn-light flex-fill" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger flex-fill" data-confirm-yes>Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

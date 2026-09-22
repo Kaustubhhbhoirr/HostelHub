@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge, priority_badge, empty_state, complaint_code %}
+{% block title %}Complaints{% endblock %}
+{% block topbar_title %}Maintenance{% endblock %}
+
+{% block content %}
+{% call page_header('Maintenance complaints', 'Open complaints are listed first, highest priority on top.') %}
+  <a href="{{ url_for('college.request_list') }}" class="btn btn-white"><i class="bi bi-bank me-2"></i>College requests</a>
+{% endcall %}
+
+{# Status tabs keep the other filters, so they can be combined. #}
+{% macro tab(value, label, n) %}
+  <a href="{{ url_for('complaints.warden_list', status=value, category=filters.category, priority=filters.priority, block=filters.block, q=filters.q) }}"
+     class="status-tab {{ 'active' if filters.status == value }}">{{ label }} <span class="count">{{ n }}</span></a>
+{% endmacro %}
+
+<div class="d-flex flex-wrap gap-2 mb-3 status-tabs">
+  {{ tab('', 'All', counts.values()|sum - counts.open) }}
+  {{ tab('open', 'Open', counts.open) }}
+  {% for s in statuses %}{{ tab(s, s, counts.get(s, 0)) }}{% endfor %}
+</div>
+
+<div class="card table-card">
+  <form class="filter-bar" method="get" data-no-loading>
+    <input type="hidden" name="status" value="{{ filters.status }}">
+    <div class="search-input">
+      <i class="bi bi-search"></i>
+      <input type="search" class="form-control" name="q" value="{{ filters.q }}" placeholder="Search student, room or description" aria-label="Search complaints">
+    </div>
+    <select name="category" class="form-select w-auto" aria-label="Category">
+      <option value="">All categories</option>
+      {% for c in categories %}<option {{ 'selected' if filters.category == c }}>{{ c }}</option>{% endfor %}
+    </select>
+    <select name="priority" class="form-select w-auto" aria-label="Priority">
+      <option value="">Any priority</option>
+      {% for p in priorities %}<option {{ 'selected' if filters.priority == p }}>{{ p }}</option>{% endfor %}
+    </select>
+    <select name="block" class="form-select w-auto" aria-label="Block">
+      <option value="">All blocks</option>
+      {% for b in blocks %}<option value="{{ b }}" {{ 'selected' if filters.block == b }}>Block {{ b }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-primary" type="submit">Apply</button>
+    {% if filters.q or filters.category or filters.priority or filters.block or filters.status %}
+      <a href="{{ url_for('complaints.warden_list') }}" class="btn btn-light">Reset</a>
+    {% endif %}
+  </form>
+
+  {% if complaints %}
+  <div class="table-responsive">
+    <table class="table table-hover">
+      <thead><tr><th>Complaint</th><th>Student / Room</th><th class="d-none d-lg-table-cell">Description</th><th>Priority</th><th>Status</th><th>Reported</th></tr></thead>
+      <tbody>
+        {% for c in complaints %}
+          <tr data-href="{{ url_for('complaints.warden_detail', complaint_id=c.id) }}">
+            <td>
+              <div class="cell-title">{{ c.category }} {% if c.image_path %}<i class="bi bi-image text-muted ms-1" title="Has photo"></i>{% endif %}</div>
+              <div class="cell-sub">{{ complaint_code(c.id) }}</div>
+            </td>
+            <td><div>{{ c.student_name }}</div><div class="cell-sub">{{ c.block }}-{{ c.room_number }}</div></td>
+            <td class="d-none d-lg-table-cell text-muted" style="max-width: 300px;"><div class="text-truncate">{{ c.description }}</div></td>
+            <td>{{ priority_badge(c.priority) }}</td>
+            <td>{{ status_badge(c.status) }}</td>
+            <td class="text-muted small text-nowrap">{{ c.created_at|timeago }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    {{ empty_state('bi-funnel', 'No complaints match', 'Try removing some filters.', url_for('complaints.warden_list'), 'Reset filters') }}
+  {% endif %}
+</div>
+{% endblock %}

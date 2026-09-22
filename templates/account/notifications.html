@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, empty_state %}
+{% block title %}Notifications{% endblock %}
+{% block topbar_title %}Notifications{% endblock %}
+
+{% block content %}
+{% call page_header('Notifications', 'Updates about complaints, room requests and hostel activity.') %}
+  {% if unread_count %}
+    <form method="post" action="{{ url_for('account.mark_all_read') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-white" type="submit"><i class="bi bi-check2-all me-2"></i>Mark all as read</button>
+    </form>
+  {% endif %}
+  <form method="post" action="{{ url_for('account.clear_read') }}"
+        data-confirm="All notifications you have already read will be deleted." data-confirm-button="Delete">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-white" type="submit"><i class="bi bi-trash3 me-2"></i>Clear read</button>
+  </form>
+{% endcall %}
+
+<div class="card">
+  <div class="filter-bar">
+    <div class="status-tabs">
+      <a href="{{ url_for('account.notifications') }}" class="status-tab {{ 'active' if show != 'unread' }}">All</a>
+      <a href="{{ url_for('account.notifications', show='unread') }}" class="status-tab {{ 'active' if show == 'unread' }}">
+        Unread <span class="count">{{ unread_count }}</span>
+      </a>
+    </div>
+  </div>
+
+  {% for n in notifications %}
+    <div class="notification-row {{ 'unread' if not n.is_read }}">
+      <span class="notif-icon notif-{{ n.type }}"><i class="bi {{ {'complaint':'bi-tools','room_request':'bi-arrow-left-right','college':'bi-bank','allocation':'bi-door-open'}.get(n.type, 'bi-info-circle') }}"></i></span>
+      <div class="flex-grow-1 min-w-0">
+        <div class="d-flex align-items-center gap-2">
+          {% if not n.is_read %}<span class="unread-dot" title="Unread"></span>{% endif %}
+          <span class="notif-title">{{ n.title }}</span>
+        </div>
+        <span class="notif-text">{{ n.message }}</span>
+        <span class="notif-time">{{ n.created_at|datetime }} · {{ n.created_at|timeago }}</span>
+      </div>
+      <a href="{{ url_for('account.open_notification', notification_id=n.id) }}" class="btn btn-sm btn-white flex-shrink-0">
+        {{ 'Open' if n.link else 'Mark read' }}
+      </a>
+    </div>
+  {% else %}
+    {{ empty_state('bi-bell-slash', 'Nothing here', 'You have no ' ~ ('unread ' if show == 'unread' else '') ~ 'notifications.') }}
+  {% endfor %}
+</div>
+{% endblock %}
