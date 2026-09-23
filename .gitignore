@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # HostelHub .gitignore
-# Never commit: virtual environments, databases, secrets, uploads
+# Never commit: virtual environments, secrets, local files
 # ---------------------------------------------------------------
 
 # Python
@@ -13,19 +13,12 @@ __pycache__/
 venv/
 env/
 
-# Local databases (recreate with: python seed.py)
-*.db
-*.sqlite
-*.sqlite3
-*.db-journal
-
 # Secrets / environment files (only .env.example is committed)
 .env
 .env.*
 !.env.example
 
-# Uploaded complaint photos are private student data.
-# Keep only the empty folder.
+# Uploaded complaint photos are private student data (only the folder is kept).
 uploads/**
 !uploads/
 !uploads/complaints/
@@ -50,3 +43,11 @@ bank.md
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Firebase service-account keys (secret: they give full access to the project).
+# The file Firebase downloads is named like hostelhub-83310-firebase-adminsdk-xxxxx-1234567890.json.
+*serviceAccount*.json
+*service-account*.json
+*firebase-adminsdk*.json
+firebase-credentials*.json
+secrets/

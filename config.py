@@ -6,25 +6,44 @@ complaint categories, status names, ...) lives here so it is defined
 in exactly one place.
 """
 
+import json
 import os
 
 # Absolute path of the folder that contains this file (the project root).
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 # ------------------------------------------------------------------
+# Firebase: the only backend HostelHub uses
+# ------------------------------------------------------------------
+# Firestore stores every record and Firebase Authentication handles email/password
+# and Google sign-in. (Firebase Cloud Storage is not used: it needs the paid Blaze
+# plan. Complaint photos are optional; see COMPLAINT_IMAGE_STORAGE below.)
+# The same Firebase project is used on a laptop and on Vercel, so a complaint
+# submitted on localhost is immediately visible to the warden anywhere.
+#
+# This web configuration is PUBLIC (Firebase is designed this way): it only
+# identifies the project for the browser. The secret service-account key is read
+# from the environment, never from this file.
+FIREBASE_PROJECT = {
+    "apiKey": "AIzaSyANMfxmhPsMoIeKe7YInMaAAt405Gm12Nc",
+    "authDomain": "hostelhub-83310.firebaseapp.com",
+    "projectId": "hostelhub-83310",
+    "messagingSenderId": "858224007054",
+    "appId": "1:858224007054:web:d0eef80405c00182bc76df",
+    "measurementId": "G-YYW88HGTSZ",
+}
+
+# ------------------------------------------------------------------
 # Where is the app running?
 # ------------------------------------------------------------------
 # Environment variables are settings given to the program from OUTSIDE the
-# code (the terminal, or the Render / Vercel dashboard). Secrets live there, never in Git.
+# code (the terminal, or the Vercel dashboard). Secrets live there, never in Git.
 #
-# Render automatically sets RENDER=true and Vercel sets VERCEL=1 on their servers,
-# so the app can never silently run in development mode there. HOSTELHUB_ENV=production
-# lets you test production behaviour on your own computer too.
-IS_PRODUCTION = (
-    os.environ.get("RENDER") == "true"
-    or os.environ.get("VERCEL") == "1"
-    or os.environ.get("HOSTELHUB_ENV") == "production"
-)
+# Vercel automatically sets VERCEL=1 on its servers, so the app can never silently
+# run in development mode there. HOSTELHUB_ENV=production lets you test production
+# behaviour on your own computer too.
+ON_VERCEL = os.environ.get("VERCEL") == "1"
+IS_PRODUCTION = ON_VERCEL or os.environ.get("HOSTELHUB_ENV") == "production"
 
 # Fallback key for local development ONLY. Production refuses to start with it.
 DEV_SECRET_KEY = "dev-only-change-this-secret-key"
@@ -43,24 +62,14 @@ class Config:
     # locally and only when explicitly requested with HOSTELHUB_DEBUG=1.
     DEBUG = os.environ.get("HOSTELHUB_DEBUG") == "1" and not IS_PRODUCTION
 
-    # PostgreSQL connection string for deployment, e.g. postgresql://user:password@host:6543/postgres
-    # Empty (the default) means: use the local SQLite file below.
-    DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-
-    # SQLite database file (local development) and the SQL file that creates the tables.
-    DATABASE = os.path.join(BASE_DIR, "database", "hostelhub.db")
-    SCHEMA_FILE = os.path.join(BASE_DIR, "database", "schema.sql")
-
-    # Complaint photos (the database only stores the generated file name).
-    # LOCAL: saved in this folder, deliberately NOT inside /static.
+    # Complaint photos are optional (see storage.py):
+    #   local - files in uploads/complaints/ on this computer (default locally)
+    #   none  - photo uploads switched off (default on Vercel, whose disk is temporary)
+    # The complaint document keeps only the generated file name, never the image.
+    ON_VERCEL = ON_VERCEL
+    COMPLAINT_IMAGE_STORAGE = (os.environ.get("COMPLAINT_IMAGE_STORAGE", "").strip().lower()
+                               or ("none" if ON_VERCEL else "local"))
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads", "complaints")
-    # DEPLOYMENT: saved in a PRIVATE Supabase Storage bucket (see storage.py).
-    # Leave SUPABASE_URL empty to use the local folder.
-    SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-    SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
-    SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "").strip() or "complaint-photos"
-    # Either way, photos are only sent through a route that first checks who is
-    # asking (see complaint_image in routes/complaints.py).
 
     # Flask rejects any request body bigger than 4 MB (returns error 413).
     # Vercel refuses request bodies over 4.5 MB, so the limit stays below that.
@@ -74,32 +83,45 @@ class Config:
     # In production the site is served over HTTPS, so the cookie is never sent over plain HTTP.
     SESSION_COOKIE_SECURE = IS_PRODUCTION
 
-    # Google sign-in (Firebase). Both are optional: without them the Google button is hidden.
-    #   FIREBASE_CLIENT_CONFIG   - PUBLIC web config (JSON), sent to the login page
-    #   FIREBASE_SERVICE_ACCOUNT - SECRET service-account key (JSON), used only on the server
-    #                              to verify Google sign-in tokens. Never commit it.
-    FIREBASE_CLIENT_CONFIG = os.environ.get("FIREBASE_CLIENT_CONFIG", "").strip()
+    # Firebase:
+    #   FIREBASE_CLIENT_CONFIG   - PUBLIC web config (JSON) sent to the login page. It is
+    #                              designed to be public; the project default is below.
+    #   FIREBASE_SERVICE_ACCOUNT - SECRET service-account key (JSON). The server uses it for
+    #                              Firebase Authentication and Firestore.
+    #                              Never commit it and never send it to the browser.
+    #   FIREBASE_CREDENTIALS_FILE - alternative to the variable above: the path of a
+    #                              service-account JSON file kept outside Git.
+    FIREBASE_CLIENT_CONFIG = os.environ.get("FIREBASE_CLIENT_CONFIG", "").strip() or json.dumps(FIREBASE_PROJECT)
     FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
+    # A relative path (e.g. secrets/key.json) is read from the project folder.
+    FIREBASE_CREDENTIALS_FILE = (
+        os.path.normpath(os.path.join(BASE_DIR, os.environ["FIREBASE_CREDENTIALS_FILE"].strip()))
+        if os.environ.get("FIREBASE_CREDENTIALS_FILE", "").strip() else "")
 
 
 def check_production_settings(settings):
     """Return a list of configuration problems that make production unsafe.
 
-    `settings` is Flask's app.config (a dictionary). Locally this always
-    returns an empty list, so development needs no extra setup.
+    `settings` is Flask's app.config (a dictionary). Firebase credentials are
+    required everywhere; the secret key and debug rules only in production.
     """
     problems = []
+    # Firebase is the only backend, so its credentials are required everywhere,
+    # including on a laptop: there is no local database to fall back to.
+    if not (settings.get("FIREBASE_SERVICE_ACCOUNT") or settings.get("FIREBASE_CREDENTIALS_FILE")):
+        problems.append("FIREBASE_SERVICE_ACCOUNT (or FIREBASE_CREDENTIALS_FILE) must be set: "
+                        "HostelHub stores all data in Firebase and has no local database.")
+    image_storage = settings.get("COMPLAINT_IMAGE_STORAGE", "none")
+    if image_storage not in ("local", "none"):
+        problems.append("COMPLAINT_IMAGE_STORAGE must be 'local' or 'none'.")
+    elif image_storage == "local" and settings.get("ON_VERCEL"):
+        problems.append("COMPLAINT_IMAGE_STORAGE=local cannot be used on Vercel: its disk is temporary, "
+                        "so photos would be lost. Use 'none' until a cloud image service is added.")
     if settings["IS_PRODUCTION"]:
         if settings["SECRET_KEY"] == DEV_SECRET_KEY or len(settings["SECRET_KEY"]) < 32:
             problems.append("HOSTELHUB_SECRET_KEY must be set to a random value of at least 32 characters.")
         if settings["DEBUG"]:
             problems.append("Debug mode must be off in production.")
-        # Render's and Vercel's file systems are temporary, so a SQLite file would lose data.
-        if not settings["DATABASE_URL"].startswith(("postgres://", "postgresql://")):
-            problems.append("DATABASE_URL must point to a hosted PostgreSQL database.")
-        # Photos saved in the host's temporary file system would disappear.
-        if not settings["SUPABASE_URL"].startswith("https://") or not settings["SUPABASE_SECRET_KEY"]:
-            problems.append("SUPABASE_URL (https://...) and SUPABASE_SECRET_KEY must be set for photo storage.")
     return problems
 
 

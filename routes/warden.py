@@ -9,12 +9,14 @@ CRUD on the users table:
 """
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
-from werkzeug.security import generate_password_hash
 
-from config import STUDENT_EMAIL_DOMAIN, DEPARTMENTS, OPEN_COMPLAINT_STATUSES
-from database import DatabaseError, IntegrityError, execute, get_db, now_str, query_all, query_one
-from helpers import (InvalidAllocationError, cancel_pending_room_requests,
-                     get_active_allocation, vacate_bed)
+import firebase_accounts
+from config import STUDENT_EMAIL_DOMAIN, DEPARTMENTS
+from data import DatabaseError, IntegrityError, get_store, now_str
+from data.queries import (allocation_history, blocks as list_blocks, dashboard_data,
+                          get_active_allocation, recent_complaints_with_names,
+                          recent_requests_with_names, sort_rows, student_list as list_students)
+from helpers import InvalidAllocationError, cancel_pending_room_requests, vacate_bed
 from routes.auth import warden_required
 
 warden_bp = Blueprint("warden", __name__, url_prefix="/warden")
@@ -24,11 +26,6 @@ warden_bp = Blueprint("warden", __name__, url_prefix="/warden")
 # Dashboard
 # ------------------------------------------------------------------
 
-def count(sql, params=()):
-    """Run a SELECT COUNT(*) AS total query and return just the number."""
-    return query_one(sql, params)["total"]
-
-
 def percent(part, whole):
     """Safe percentage (avoids dividing by zero)."""
     return round(part * 100 / whole) if whole else 0
@@ -37,90 +34,48 @@ def percent(part, whole):
 @warden_bp.route("/dashboard")
 @warden_required
 def dashboard():
-    # Bed counts per status -> dictionary like {"occupied": 67, "available": 24, ...}
-    bed_rows = query_all("SELECT status, COUNT(*) AS total FROM beds GROUP BY status")
-    beds_by_status = {row["status"]: row["total"] for row in bed_rows}
+    data = dashboard_data()
 
-    total_beds = sum(beds_by_status.values())
-    # Beds in closed rooms (unavailable) cannot be used, so they are not counted for occupancy.
-    usable_beds = total_beds - beds_by_status.get("unavailable", 0)
-    occupied_beds = beds_by_status.get("occupied", 0)
-
-    placeholders = ", ".join("?" for _ in OPEN_COMPLAINT_STATUSES)
     stats = {
-        "students": count("SELECT COUNT(*) AS total FROM users WHERE role = 'student' AND is_active = 1"),
-        "rooms": count("SELECT COUNT(*) AS total FROM rooms WHERE status != 'inactive'"),
-        "total_beds": total_beds,
-        "occupied_beds": occupied_beds,
-        "available_beds": beds_by_status.get("available", 0),
-        "pending_complaints": count(
-            f"SELECT COUNT(*) AS total FROM complaints WHERE status IN ({placeholders})", OPEN_COMPLAINT_STATUSES),
-        "pending_requests": count("SELECT COUNT(*) AS total FROM room_change_requests WHERE status = 'Pending'"),
-        "occupancy": percent(occupied_beds, usable_beds),
+        "students": data["students"],
+        "rooms": data["rooms"],
+        "total_beds": data["total_beds"],
+        "occupied_beds": data["occupied_beds"],
+        "available_beds": data["available_beds"],
+        "pending_complaints": data["pending_complaints"],
+        "pending_requests": data["pending_requests"],
+        "occupancy": percent(data["occupied_beds"], data["usable_beds"]),
     }
 
     # Occupancy of each block for the progress bars.
-    block_rows = query_all(
-        """SELECT rooms.block,
-                  COUNT(beds.id) AS total,
-                  SUM(CASE WHEN beds.status = 'occupied' THEN 1 ELSE 0 END) AS occupied
-           FROM beds JOIN rooms ON rooms.id = beds.room_id
-           WHERE beds.status != 'unavailable'
-           GROUP BY rooms.block ORDER BY rooms.block"""
-    )
     blocks = [
-        {"block": row["block"], "total": row["total"], "occupied": row["occupied"],
-         "percent": percent(row["occupied"], row["total"])}
-        for row in block_rows
+        {"block": name, "total": totals["total"], "occupied": totals["occupied"],
+         "percent": percent(totals["occupied"], totals["total"])}
+        for name, totals in sorted(data["block_totals"].items())
     ]
 
-    # Complaint counts per status, in the order of the workflow.
-    status_rows = query_all("SELECT status, COUNT(*) AS total FROM complaints GROUP BY status")
-    complaint_status_counts = {row["status"]: row["total"] for row in status_rows}
-    top_categories = query_all(
-        f"""SELECT category, COUNT(*) AS total FROM complaints
-            WHERE status IN ({placeholders})
-            GROUP BY category ORDER BY total DESC LIMIT 5""",
-        OPEN_COMPLAINT_STATUSES,
-    )
-
-    recent_complaints = query_all(
-        """SELECT complaints.*, users.name AS student_name, rooms.block, rooms.room_number
-           FROM complaints
-           JOIN users ON users.id = complaints.student_id
-           JOIN rooms ON rooms.id = complaints.room_id
-           ORDER BY complaints.created_at DESC LIMIT 5"""
-    )
-    recent_requests = query_all(
-        """SELECT room_change_requests.*, users.name AS student_name
-           FROM room_change_requests JOIN users ON users.id = room_change_requests.student_id
-           ORDER BY room_change_requests.created_at DESC LIMIT 4"""
-    )
+    complaint_status_counts = data["complaint_status_counts"]
+    recent_complaints = recent_complaints_with_names(limit=5)
+    recent_requests = recent_requests_with_names(limit=4)
 
     # "Needs attention" list: each item is (icon, tone, title, count, link).
     pending_actions = [
         ("bi-inbox", "tone-amber", "New complaints to acknowledge",
          complaint_status_counts.get("Submitted", 0), url_for("complaints.warden_list", status="Submitted")),
         ("bi-exclamation-octagon", "tone-red", "High priority complaints open",
-         count(f"SELECT COUNT(*) AS total FROM complaints WHERE priority = 'High' AND status IN ({placeholders})",
-               OPEN_COMPLAINT_STATUSES),
-         url_for("complaints.warden_list", priority="High")),
+         data["high_priority_open"], url_for("complaints.warden_list", priority="High")),
         ("bi-arrow-left-right", "tone-indigo", "Room change requests to review",
          stats["pending_requests"], url_for("requests.warden_list")),
         ("bi-person-plus", "tone-green", "Students waiting for a bed",
-         count("""SELECT COUNT(*) AS total FROM users
-                  WHERE role = 'student' AND is_active = 1
-                    AND id NOT IN (SELECT student_id FROM allocations WHERE status = 'active')"""),
-         url_for("warden.student_list", allocation="unallocated")),
+         data["waiting_students"], url_for("warden.student_list", allocation="unallocated")),
         ("bi-bank", "tone-blue", "College requests awaiting response",
-         count("SELECT COUNT(*) AS total FROM college_maintenance_requests WHERE status IN ('Sent to College', 'Under Review')"),
-         url_for("college.request_list")),
+         data["college_awaiting"], url_for("college.request_list")),
     ]
 
     return render_template(
         "warden/dashboard.html",
-        stats=stats, beds_by_status=beds_by_status, blocks=blocks,
-        complaint_status_counts=complaint_status_counts, top_categories=top_categories,
+        stats=stats, beds_by_status=data["beds_by_status"], blocks=blocks,
+        complaint_status_counts=complaint_status_counts, top_categories=data["top_categories"],
         recent_complaints=recent_complaints, recent_requests=recent_requests,
         pending_actions=pending_actions,
     )
@@ -137,36 +92,8 @@ def student_list():
     block = request.args.get("block", "")
     allocation_filter = request.args.get("allocation", "")   # allocated / unallocated / inactive
 
-    # Build the WHERE clause step by step. Only fixed SQL text is joined;
-    # every user-typed value goes into `params`, never into the SQL string.
-    conditions = ["users.role = 'student'"]
-    params = []
-    if search:
-        # LOWER() on both sides makes the search ignore capital letters in SQLite AND PostgreSQL.
-        conditions.append("(LOWER(users.name) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(users.student_id) LIKE ?)")
-        like = f"%{search.lower()}%"
-        params.extend([like, like, like])
-    if block:
-        conditions.append("rooms.block = ?")
-        params.append(block)
-    if allocation_filter == "allocated":
-        conditions.append("allocations.id IS NOT NULL AND users.is_active = 1")
-    elif allocation_filter == "unallocated":
-        conditions.append("allocations.id IS NULL AND users.is_active = 1")
-    elif allocation_filter == "inactive":
-        conditions.append("users.is_active = 0")
-
-    students = query_all(
-        f"""SELECT users.*, rooms.block, rooms.room_number, beds.bed_number
-            FROM users
-            LEFT JOIN allocations ON allocations.student_id = users.id AND allocations.status = 'active'
-            LEFT JOIN beds  ON beds.id  = allocations.bed_id
-            LEFT JOIN rooms ON rooms.id = beds.room_id
-            WHERE {' AND '.join(conditions)}
-            ORDER BY users.is_active DESC, users.name""",
-        tuple(params),
-    )
-    blocks = [row["block"] for row in query_all("SELECT DISTINCT block FROM rooms ORDER BY block")]
+    students = list_students(search=search, block=block, allocation_filter=allocation_filter)
+    blocks = list_blocks()
     return render_template("warden/students.html", students=students, blocks=blocks,
                            search=search, block=block, allocation_filter=allocation_filter)
 
@@ -176,22 +103,18 @@ def student_list():
 def student_detail(student_id):
     student = get_student_or_404(student_id)
     allocation = get_active_allocation(student_id)
-    history = query_all(
-        """SELECT allocations.*, beds.bed_number, rooms.block, rooms.room_number
-           FROM allocations JOIN beds ON beds.id = allocations.bed_id JOIN rooms ON rooms.id = beds.room_id
-           WHERE allocations.student_id = ? ORDER BY allocations.allocated_at DESC""",
-        (student_id,),
-    )
-    complaints = query_all("SELECT * FROM complaints WHERE student_id = ? ORDER BY created_at DESC", (student_id,))
-    room_requests = query_all("SELECT * FROM room_change_requests WHERE student_id = ? ORDER BY created_at DESC",
-                              (student_id,))
+    store = get_store()
+    history = allocation_history(student_id)
+    complaints = sort_rows(store.find("complaints", student_id=student_id), "created_at", "id", reverse=True)
+    room_requests = sort_rows(store.find("room_change_requests", student_id=student_id),
+                              "created_at", "id", reverse=True)
     return render_template("warden/student_detail.html", student=student, allocation=allocation,
                            history=history, complaints=complaints, room_requests=room_requests)
 
 
 def get_student_or_404(student_id):
-    student = query_one("SELECT * FROM users WHERE id = ? AND role = 'student'", (student_id,))
-    if student is None:
+    student = get_store().get("users", student_id)
+    if student is None or student["role"] != "student":
         abort(404)
     return student
 
@@ -199,6 +122,14 @@ def get_student_or_404(student_id):
 # ------------------------------------------------------------------
 # Students — CREATE and UPDATE (they share one form)
 # ------------------------------------------------------------------
+
+def check_unique(store, data, student_id=None):
+    """Email and student ID may be used by only one account (UNIQUE in the schema)."""
+    for field, value in (("email", data["email"]), ("student_id", data["student_id"])):
+        clash = store.first("users", **{field: value})
+        if clash and clash["id"] != student_id:
+            raise IntegrityError[0](f"users.{field} already used")
+
 
 def read_student_form(is_new):
     """Read + validate the student form. Returns (data_dict, list_of_errors)."""
@@ -236,8 +167,7 @@ def read_student_form(is_new):
 
 
 def friendly_integrity_message(error):
-    """Turn a UNIQUE constraint error into a message a user understands."""
-    # SQLite says "users.student_id", PostgreSQL says "users_student_id_key".
+    """Turn a "value already used" error into a message a user understands."""
     text = str(error)
     if "student_id" in text:
         return "Another student already has this student ID."
@@ -256,21 +186,34 @@ def student_new():
             for message in errors:
                 flash(message, "danger")
         else:
+            store = get_store()
+            created = False
             try:
-                new_id = execute(
-                    """INSERT INTO users (name, email, password_hash, role, student_id, phone,
-                                          department, year_of_study, is_active, created_at)
-                       VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 1, ?)""",
-                    (data["name"], data["email"], generate_password_hash(data["password"]),
-                     data["student_id"], data["phone"] or None, data["department"],
-                     int(data["year_of_study"]), now_str()),
-                )
-                get_db().commit()
-                flash(f"Student {data['name']} added. You can now allocate a bed.", "success")
+                check_unique(store, data)
+                # The sign-in account lives in Firebase Authentication; Firestore
+                # keeps who the student is. Both are needed before they can log in.
+                uid, created = firebase_accounts.create_account(data["email"], data["password"], data["name"])
+                new_id = store.insert("users", {
+                    "name": data["name"], "email": data["email"], "role": "student",
+                    "student_id": data["student_id"], "phone": data["phone"] or None,
+                    "department": data["department"], "year_of_study": int(data["year_of_study"]),
+                    "is_active": 1, "firebase_uid": uid, "created_at": now_str(),
+                })
+                store.commit()
+                flash(f"Student {data['name']} added. They can sign in with that email, "
+                      f"with the password you set or with Google.", "success")
                 return redirect(url_for("warden.student_detail", student_id=new_id))
             except IntegrityError as error:
-                get_db().rollback()
+                store.rollback()
                 flash(friendly_integrity_message(error), "danger")
+            except firebase_accounts.AccountError as error:
+                store.rollback()
+                flash(f"The sign-in account could not be created: {error}", "danger")
+            except DatabaseError:
+                store.rollback()
+                if created:      # do not leave a sign-in account without a HostelHub record
+                    firebase_accounts.delete_account(data["email"])
+                flash("The student could not be saved. Please try again.", "danger")
 
     return render_template("warden/student_form.html", student=data, is_new=True, departments=DEPARTMENTS)
 
@@ -288,23 +231,31 @@ def student_edit(student_id):
             for message in errors:
                 flash(message, "danger")
         else:
+            store = get_store()
             try:
-                execute(
-                    """UPDATE users SET name = ?, email = ?, student_id = ?, phone = ?,
-                                        department = ?, year_of_study = ?
-                       WHERE id = ?""",
-                    (data["name"], data["email"], data["student_id"], data["phone"] or None,
-                     data["department"], int(data["year_of_study"]), student_id),
-                )
-                if data["password"]:
-                    execute("UPDATE users SET password_hash = ? WHERE id = ?",
-                            (generate_password_hash(data["password"]), student_id))
-                get_db().commit()
+                check_unique(store, data, student_id)
+                changes = {"name": data["name"], "email": data["email"],
+                           "student_id": data["student_id"], "phone": data["phone"] or None,
+                           "department": data["department"], "year_of_study": int(data["year_of_study"])}
+                if data["password"] or data["email"] != student["email"] or data["name"] != student["name"]:
+                    # The sign-in account (Firebase Authentication) must follow the new
+                    # email address; passwords live there, never in Firestore.
+                    changes["firebase_uid"] = firebase_accounts.update_account(
+                        student.get("firebase_uid"), email=data["email"],
+                        password=data["password"] or None, name=data["name"])
+                store.update("users", student_id, changes)
+                store.commit()
                 flash("Student details updated.", "success")
                 return redirect(url_for("warden.student_detail", student_id=student_id))
             except IntegrityError as error:
-                get_db().rollback()
+                store.rollback()
                 flash(friendly_integrity_message(error), "danger")
+            except firebase_accounts.AccountError as error:
+                store.rollback()
+                flash(f"The sign-in account could not be updated: {error}", "danger")
+            except DatabaseError:
+                store.rollback()
+                flash("The changes could not be saved. Please try again.", "danger")
 
     return render_template("warden/student_form.html", student=form_values, is_new=False,
                            departments=DEPARTMENTS)
@@ -318,22 +269,24 @@ def student_edit(student_id):
 @warden_required
 def student_toggle_active(student_id):
     student = get_student_or_404(student_id)
-    db = get_db()
+    store = get_store()
     try:
         if student["is_active"]:
             # Deactivating frees the student's bed and cancels open requests.
             if get_active_allocation(student_id):
                 vacate_bed(student_id)
             cancel_pending_room_requests(student_id, "Cancelled because the student account was deactivated.")
-            execute("UPDATE users SET is_active = 0 WHERE id = ?", (student_id,))
+            store.update("users", student_id, {"is_active": 0})
+            firebase_accounts.set_enabled(student["email"], False)   # also stop the Firebase sign-in
             message = f"{student['name']} has been deactivated and their bed released."
         else:
-            execute("UPDATE users SET is_active = 1 WHERE id = ?", (student_id,))
+            store.update("users", student_id, {"is_active": 1})
+            firebase_accounts.set_enabled(student["email"], True)
             message = f"{student['name']} has been reactivated."
-        db.commit()
+        store.commit()
         flash(message, "success")
     except (InvalidAllocationError, *DatabaseError):   # * unpacks the tuple of database errors
-        db.rollback()
+        store.rollback()
         flash("Could not change the account status. Please try again.", "danger")
     return redirect(url_for("warden.student_detail", student_id=student_id))
 
@@ -342,22 +295,29 @@ def student_toggle_active(student_id):
 @warden_required
 def student_delete(student_id):
     student = get_student_or_404(student_id)
-    db = get_db()
+    store = get_store()
     try:
+        # Complaints and room-change requests are the student's history: an account
+        # with history is kept (and deactivated instead), exactly as before.
+        if store.find("complaints", student_id=student_id) or \
+                store.find("room_change_requests", student_id=student_id):
+            raise IntegrityError[0]("student has history")
         if get_active_allocation(student_id):
             vacate_bed(student_id)
-        # Allocation history and notifications are removed automatically (ON DELETE CASCADE).
-        execute("DELETE FROM users WHERE id = ?", (student_id,))
-        db.commit()
+        for allocation in store.find("allocations", student_id=student_id):
+            store.delete("allocations", allocation["id"])
+        for notification in store.find("notifications", user_id=student_id):
+            store.delete("notifications", notification["id"])
+        store.delete("users", student_id)
+        store.commit()
+        firebase_accounts.delete_account(student["email"])   # remove the sign-in account too
         flash(f"Student {student['name']} was deleted.", "success")
         return redirect(url_for("warden.student_list"))
     except IntegrityError:
-        # Complaints and room requests point to this student (foreign keys),
-        # so SQLite refuses the DELETE. Keeping history is safer anyway.
-        db.rollback()
+        store.rollback()
         flash("This student has complaint or request history and cannot be deleted. Deactivate the account instead.",
               "warning")
     except (InvalidAllocationError, *DatabaseError):   # * unpacks the tuple of database errors
-        db.rollback()
+        store.rollback()
         flash("Could not delete the student. Please try again.", "danger")
     return redirect(url_for("warden.student_detail", student_id=student_id))

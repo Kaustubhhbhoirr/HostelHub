@@ -2,7 +2,7 @@
 routes/rooms.py — Room management (CRUD) and the visual bed allocation map.
 
 Rooms:  room_list, room_new, room_edit, room_delete
-Map:    bed_map (the RedBus-style visual layout)
+Map:    bed_map (the visual bed layout)
 Beds:   bed_allocate, bed_vacate, bed_status
 
 Every colour on the map comes from beds.status in the database.
@@ -12,16 +12,18 @@ Nothing about occupancy is hard-coded in HTML or JavaScript.
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
 from config import MANUAL_BED_STATUSES, ROOM_STATUSES
-from database import DatabaseError, IntegrityError, execute, get_db, query_all, query_one
+from data import DatabaseError, IntegrityError, get_store
+from data.queries import (bed_map_rows, blocks as list_blocks, floors as list_floors, get_bed,
+                          occupant_of_bed, room_list as list_rooms, rooms_on_floor, unallocated_students)
 from helpers import (InvalidAllocationError, allocate_bed, bed_label, cancel_pending_room_requests,
-                     create_notification, get_bed, vacate_bed)
+                     create_notification, vacate_bed)
 from routes.auth import warden_required
 
 rooms_bp = Blueprint("rooms", __name__, url_prefix="/warden/rooms")
 
 
 def get_room_or_404(room_id):
-    room = query_one("SELECT * FROM rooms WHERE id = ?", (room_id,))
+    room = get_store().get("rooms", room_id)
     if room is None:
         abort(404)
     return room
@@ -37,32 +39,11 @@ def room_list():
     search = request.args.get("q", "").strip()
     block = request.args.get("block", "")
     status = request.args.get("status", "")
+    if status not in ROOM_STATUSES:
+        status = ""
 
-    conditions, params = [], []
-    if search:
-        # Matches "204", "A-204" or "a204": remove the dash/spaces and compare block+number.
-        conditions.append("UPPER(rooms.block || rooms.room_number) LIKE ?")
-        params.append(f"%{search.upper().replace('-', '').replace(' ', '')}%")
-    if block:
-        conditions.append("rooms.block = ?")
-        params.append(block)
-    if status in ROOM_STATUSES:
-        conditions.append("rooms.status = ?")
-        params.append(status)
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
-    rooms = query_all(
-        f"""SELECT rooms.*,
-                   COUNT(beds.id) AS bed_count,
-                   SUM(CASE WHEN beds.status = 'occupied' THEN 1 ELSE 0 END) AS occupied,
-                   SUM(CASE WHEN beds.status = 'available' THEN 1 ELSE 0 END) AS available
-            FROM rooms LEFT JOIN beds ON beds.room_id = rooms.id
-            {where}
-            GROUP BY rooms.id
-            ORDER BY rooms.block, rooms.floor, rooms.room_number""",
-        tuple(params),
-    )
-    blocks = [row["block"] for row in query_all("SELECT DISTINCT block FROM rooms ORDER BY block")]
+    rooms = list_rooms(search=search, block=block, status=status)
+    blocks = list_blocks()
     return render_template("rooms/list.html", rooms=rooms, blocks=blocks, block=block, search=search,
                            status=status, room_statuses=ROOM_STATUSES)
 
@@ -110,7 +91,7 @@ def room_new(room_id=None):
                 flash(message, "danger")
             return render_template("rooms/form.html", room=room, values=values, room_statuses=ROOM_STATUSES)
 
-        db = get_db()
+        store = get_store()
         try:
             if room is None:
                 create_room(data)
@@ -118,13 +99,13 @@ def room_new(room_id=None):
             else:
                 update_room(room, data)
                 flash(f"Room {data['block']}-{data['room_number']} updated.", "success")
-            db.commit()
+            store.commit()
             return redirect(url_for("rooms.room_list"))
         except ValueError as error:          # a business rule was broken (see update_room)
-            db.rollback()
+            store.rollback()
             flash(str(error), "danger")
-        except IntegrityError:        # UNIQUE (block, room_number)
-            db.rollback()
+        except IntegrityError:        # the block and room number are already taken
+            store.rollback()
             flash(f"Room {data['block']}-{data['room_number']} already exists.", "danger")
 
     return render_template("rooms/form.html", room=room, values=values, room_statuses=ROOM_STATUSES)
@@ -136,55 +117,79 @@ def bed_status_for_room(room_status):
 
 
 def create_room(data):
-    room_id = execute(
-        "INSERT INTO rooms (block, floor, room_number, capacity, status) VALUES (?, ?, ?, ?, ?)",
-        (data["block"], int(data["floor"]), data["room_number"], int(data["capacity"]), data["status"]),
-    )
+    store = get_store()
+    if store.first("rooms", block=data["block"], room_number=data["room_number"]):
+        raise IntegrityError[0](f"Room {data['block']}-{data['room_number']} already exists.")
+    room_id = store.insert("rooms", {
+        "block": data["block"], "floor": int(data["floor"]), "room_number": data["room_number"],
+        "capacity": int(data["capacity"]), "status": data["status"],
+    })
     # A room with capacity 4 gets beds numbered 1, 2, 3, 4.
     for bed_number in range(1, int(data["capacity"]) + 1):
-        execute("INSERT INTO beds (room_id, bed_number, status) VALUES (?, ?, ?)",
-                (room_id, bed_number, bed_status_for_room(data["status"])))
+        store.insert("beds", {"room_id": room_id, "bed_number": bed_number,
+                              "status": bed_status_for_room(data["status"])})
 
 
 def update_room(room, data):
+    store = get_store()
     new_capacity = int(data["capacity"])
-    beds = query_all("SELECT * FROM beds WHERE room_id = ? ORDER BY bed_number", (room["id"],))
+    beds = sorted(store.find("beds", room_id=room["id"]), key=lambda bed: bed["bed_number"])
     busy_beds = [bed for bed in beds if bed["status"] in ("occupied", "reserved")]
 
     # Closing a room or putting it under maintenance is only allowed when nobody lives there.
     if data["status"] != "active" and busy_beds:
         raise ValueError("Move the students out first: this room still has occupied or reserved beds.")
 
-    execute("UPDATE rooms SET block = ?, floor = ?, room_number = ?, capacity = ?, status = ? WHERE id = ?",
-            (data["block"], int(data["floor"]), data["room_number"], new_capacity, data["status"], room["id"]))
+    clash = store.first("rooms", block=data["block"], room_number=data["room_number"])
+    if clash and clash["id"] != room["id"]:
+        raise IntegrityError[0](f"Room {data['block']}-{data['room_number']} already exists.")
+
+    store.update("rooms", room["id"], {
+        "block": data["block"], "floor": int(data["floor"]), "room_number": data["room_number"],
+        "capacity": new_capacity, "status": data["status"],
+    })
 
     # --- Capacity change ---
     if new_capacity > len(beds):
         for bed_number in range(len(beds) + 1, new_capacity + 1):
-            execute("INSERT INTO beds (room_id, bed_number, status) VALUES (?, ?, ?)",
-                    (room["id"], bed_number, bed_status_for_room(data["status"])))
+            store.insert("beds", {"room_id": room["id"], "bed_number": bed_number,
+                                  "status": bed_status_for_room(data["status"])})
     elif new_capacity < len(beds):
-        # Remove beds from the highest number down; they must be free.
+        # Remove beds from the highest number down; they must be free and unused.
         beds_to_remove = beds[new_capacity:]
         if any(bed["status"] in ("occupied", "reserved") for bed in beds_to_remove):
             raise ValueError(f"Cannot reduce capacity to {new_capacity}: a bed that would be removed is in use.")
         for bed in beds_to_remove:
-            try:
-                execute("DELETE FROM beds WHERE id = ?", (bed["id"],))
-            except IntegrityError:
-                # Old allocations or requests still point to this bed (foreign key), so it
-                # cannot be removed. The route rolls back the whole edit.
+            if bed_has_history(store, bed["id"]):
+                # Old allocations or requests still point to this bed, so it cannot be
+                # removed. The route rolls back the whole edit.
                 raise ValueError(f"Bed {bed['bed_number']} has allocation history and cannot be removed. "
                                  f"Mark it unavailable on the map instead of reducing capacity.")
+            store.delete("beds", bed["id"])
 
     # --- Status change: keep the free beds in step with the room ---
     if data["status"] != room["status"]:
         new_bed_status = bed_status_for_room(data["status"])
-        execute(
-            """UPDATE beds SET status = ?
-               WHERE room_id = ? AND bed_number <= ? AND status IN ('available', 'maintenance', 'unavailable')""",
-            (new_bed_status, room["id"], new_capacity),
-        )
+        for bed in store.find("beds", room_id=room["id"]):
+            if bed["bed_number"] <= new_capacity and bed["status"] in ("available", "maintenance", "unavailable"):
+                store.update("beds", bed["id"], {"status": new_bed_status})
+
+
+def bed_has_history(store, bed_id):
+    """True if any allocation or room-change request still points at this bed."""
+    if store.find("allocations", bed_id=bed_id):
+        return True
+    for field in ("current_bed_id", "requested_bed_id", "assigned_bed_id"):
+        if store.find("room_change_requests", **{field: bed_id}):
+            return True
+    return False
+
+
+def room_has_history(store, room_id):
+    """True if complaints or bed history still reference this room."""
+    if store.find("complaints", room_id=room_id):
+        return True
+    return any(bed_has_history(store, bed["id"]) for bed in store.find("beds", room_id=room_id))
 
 
 # ------------------------------------------------------------------
@@ -196,15 +201,19 @@ def update_room(room, data):
 def room_delete(room_id):
     room = get_room_or_404(room_id)
     label = f"{room['block']}-{room['room_number']}"
-    db = get_db()
+    store = get_store()
     try:
-        # Beds are deleted automatically with the room (ON DELETE CASCADE).
-        execute("DELETE FROM rooms WHERE id = ?", (room_id,))
-        db.commit()
+        if room_has_history(store, room_id):
+            raise IntegrityError[0]("room has history")
+        # The beds of the room go with it.
+        for bed in store.find("beds", room_id=room_id):
+            store.delete("beds", bed["id"])
+        store.delete("rooms", room_id)
+        store.commit()
         flash(f"Room {label} deleted.", "success")
     except IntegrityError:
         # Allocations or complaints still reference this room's beds.
-        db.rollback()
+        store.rollback()
         flash(f"Room {label} has allocation or complaint history, so it cannot be deleted. "
               f"Set its status to inactive instead.", "warning")
     return redirect(url_for("rooms.room_list"))
@@ -217,36 +226,21 @@ def room_delete(room_id):
 @rooms_bp.route("/map")
 @warden_required
 def bed_map():
-    blocks = [row["block"] for row in query_all("SELECT DISTINCT block FROM rooms ORDER BY block")]
+    blocks = list_blocks()
     if not blocks:
         return render_template("rooms/map.html", blocks=[], rooms=[])
 
     block = request.args.get("block", blocks[0])
     if block not in blocks:
         block = blocks[0]
-    floors = [row["floor"] for row in query_all(
-        "SELECT DISTINCT floor FROM rooms WHERE block = ? ORDER BY floor", (block,))]
+    floors = list_floors(block)
     floor = request.args.get("floor", type=int)
     if floor not in floors:
         floor = floors[0]
 
-    room_rows = query_all(
-        "SELECT * FROM rooms WHERE block = ? AND floor = ? ORDER BY room_number", (block, floor))
-    # One query for all beds on this floor, including the occupant (if any).
-    bed_rows = query_all(
-        """SELECT beds.*, users.id AS student_id, users.name AS student_name,
-                  users.student_id AS roll_number, users.department, allocations.allocated_at,
-                  req_user.name AS reserved_for
-           FROM beds
-           JOIN rooms ON rooms.id = beds.room_id
-           LEFT JOIN allocations ON allocations.bed_id = beds.id AND allocations.status = 'active'
-           LEFT JOIN users ON users.id = allocations.student_id
-           LEFT JOIN room_change_requests AS rcr ON rcr.requested_bed_id = beds.id AND rcr.status = 'Pending'
-           LEFT JOIN users AS req_user ON req_user.id = rcr.student_id
-           WHERE rooms.block = ? AND rooms.floor = ?
-           ORDER BY beds.bed_number""",
-        (block, floor),
-    )
+    room_rows = rooms_on_floor(block, floor)
+    # All beds on this floor, including the occupant and any student waiting for a bed.
+    bed_rows = bed_map_rows(block, floor)
 
     # Group beds under their room: {room_id: [bed, bed, ...]}
     beds_by_room = {}
@@ -260,18 +254,13 @@ def bed_map():
         floor_counts[bed["status"]] = floor_counts.get(bed["status"], 0) + 1
 
     # Active students without a bed (for the "allocate" dropdown in the modal).
-    unallocated_students = query_all(
-        """SELECT id, name, student_id, department, year_of_study FROM users
-           WHERE role = 'student' AND is_active = 1
-             AND id NOT IN (SELECT student_id FROM allocations WHERE status = 'active')
-           ORDER BY name"""
-    )
+    waiting_students = unallocated_students()
     selected_student = request.args.get("student", type=int)
-    selected_student_row = next((s for s in unallocated_students if s["id"] == selected_student), None)
+    selected_student_row = next((s for s in waiting_students if s["id"] == selected_student), None)
 
     return render_template(
         "rooms/map.html", blocks=blocks, block=block, floors=floors, floor=floor,
-        rooms=rooms, floor_counts=floor_counts, unallocated_students=unallocated_students,
+        rooms=rooms, floor_counts=floor_counts, unallocated_students=waiting_students,
         selected_student=selected_student_row, manual_bed_statuses=MANUAL_BED_STATUSES,
     )
 
@@ -296,7 +285,7 @@ def bed_allocate(bed_id):
         flash("Please choose a student to allocate.", "danger")
         return back_to_map(bed)
 
-    db = get_db()
+    store = get_store()
     try:
         allocate_bed(student_id, bed_id)
         create_notification(
@@ -304,15 +293,15 @@ def bed_allocate(bed_id):
             f"You have been allocated {bed_label(bed)} (Block {bed['block']}, Floor {bed['floor']}).",
             "allocation", url_for("student.my_room"),
         )
-        db.commit()
-        student = query_one("SELECT name FROM users WHERE id = ?", (student_id,))
+        store.commit()
+        student = store.get("users", student_id)
         flash(f"{student['name']} allocated to {bed_label(bed)}.", "success")
     except InvalidAllocationError as error:
-        db.rollback()
+        store.rollback()
         flash(str(error), "danger")
     except IntegrityError:
-        # The partial UNIQUE index stopped a double allocation.
-        db.rollback()
+        # The store's "only one allocation" rule stopped a double allocation.
+        store.rollback()
         flash("That bed or student was just allocated by someone else. Please refresh and try again.", "danger")
     return back_to_map(bed)
 
@@ -323,26 +312,22 @@ def bed_vacate(bed_id):
     bed = get_bed(bed_id)
     if bed is None:
         abort(404)
-    occupant = query_one(
-        """SELECT users.id, users.name FROM allocations JOIN users ON users.id = allocations.student_id
-           WHERE allocations.bed_id = ? AND allocations.status = 'active'""",
-        (bed_id,),
-    )
+    occupant = occupant_of_bed(bed_id)
     if occupant is None:
         flash("This bed is not occupied.", "warning")
         return back_to_map(bed)
 
-    db = get_db()
+    store = get_store()
     try:
         vacate_bed(occupant["id"])
         cancel_pending_room_requests(occupant["id"], "Cancelled because the student's bed was vacated.")
         create_notification(occupant["id"], "Bed vacated",
                             f"Your allocation for {bed_label(bed)} has ended. Contact the hostel office for details.",
                             "allocation", url_for("student.my_room"))
-        db.commit()
+        store.commit()
         flash(f"{occupant['name']} was removed from {bed_label(bed)}. The bed is now available.", "success")
     except (InvalidAllocationError, *DatabaseError):   # * unpacks the tuple of database errors
-        db.rollback()
+        store.rollback()
         flash("Could not vacate the bed. Please try again.", "danger")
     return back_to_map(bed)
 
@@ -364,7 +349,8 @@ def bed_status(bed_id):
     elif new_status == "available" and bed["room_status"] != "active":
         flash("Activate the room before making its beds available.", "warning")
     else:
-        execute("UPDATE beds SET status = ? WHERE id = ?", (new_status, bed_id))
-        get_db().commit()
+        store = get_store()
+        store.update("beds", bed_id, {"status": new_status})
+        store.commit()
         flash(f"{bed_label(bed)} marked as {new_status}.", "success")
     return back_to_map(bed)

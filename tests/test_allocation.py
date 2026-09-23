@@ -1,11 +1,11 @@
 """Bed allocation, vacating, database-level protection and room change transactions."""
 
-import sqlite3
 import unittest
 from unittest import mock
 
-from base import HostelHubTestCase
-from database import IntegrityError
+from base import HostelHubTestCase, find_problems
+from data import IntegrityError
+from data.store import StoreError
 
 
 class AllocationTests(HostelHubTestCase):
@@ -125,16 +125,18 @@ class AllocationTests(HostelHubTestCase):
         self.run_sql("INSERT INTO allocations (student_id, bed_id, allocated_at, ended_at, status) "
                      "VALUES (?, ?, '2025-01-01 00:00:00', '2025-06-01 00:00:00', 'ended')", (waiting, occupied_bed))
 
-    def test_foreign_keys_and_check_constraints(self):
-        with self.assertRaises(IntegrityError):
-            self.run_sql("INSERT INTO allocations (student_id, bed_id, allocated_at) VALUES (99999, 1, 'now')")
-        with self.assertRaises(IntegrityError):
-            self.run_sql("INSERT INTO complaints (student_id, room_id, category, description, created_at, updated_at) "
-                         "VALUES (2, 99999, 'Fan', 'x', 'now', 'now')")
-        with self.assertRaises(IntegrityError):
-            self.run_sql("UPDATE beds SET status = 'broken' WHERE id = 1")
-        with self.assertRaises(IntegrityError):
-            self.run_sql("UPDATE users SET role = 'admin' WHERE id = 2")
+    def test_consistency_check_finds_broken_references_and_values(self):
+        """Firestore has no foreign keys or CHECK constraints: check_database.py finds such records."""
+        store = self.store()
+        bed = self.document("beds", 1)
+        store.update("beds", 1, {"status": "broken"})
+        store.insert("complaints", {"student_id": 2, "room_id": 99999, "category": "Fan", "description": "x",
+                                    "status": "Submitted", "created_at": "now", "updated_at": "now"})
+        problems = find_problems(store)
+        self.assertTrue(any("does not exist" in problem for problem in problems), problems)
+        self.assertTrue(any("not allowed" in problem for problem in problems), problems)
+        store.rollback()                          # nothing was saved, so tearDown sees clean data
+        self.assertEqual(self.document("beds", 1), bed)
 
 
 class RoomChangeTests(HostelHubTestCase):
@@ -185,7 +187,7 @@ class RoomChangeTests(HostelHubTestCase):
         allocations_before = self.count("SELECT COUNT(*) FROM allocations")
 
         # Make the LAST step (creating the notification) fail, after the bed moves already ran.
-        with mock.patch("routes.requests.create_notification", side_effect=sqlite3.OperationalError("disk I/O error")):
+        with mock.patch("routes.requests.create_notification", side_effect=StoreError("database write failed")):
             response = self.decide(room_request["id"], action="approve", bed_id=target)
         self.assertIn(b"No changes were saved", response.data)
 
@@ -226,6 +228,7 @@ class RoomChangeTests(HostelHubTestCase):
         self.assertEqual(self.active_bed_of(self.demo_student_id()), room_request["current_bed_id"])
 
     def test_invalid_approvals_change_nothing(self):
+        self.request_move(self.free_bed_id())      # a second pending request that reserves a bed
         pending = self.all("SELECT * FROM room_change_requests WHERE status = 'Pending' ORDER BY id")
         first = pending[0]
         old_bed = self.active_bed_of(first["student_id"])

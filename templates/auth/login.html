@@ -56,30 +56,29 @@
 
       {% include "_flashes.html" %}
 
-      {# POST sends the form data to the login() route in routes/auth.py #}
-      {# Google sign-in (Firebase). Shown only when the server has a Firebase web config. #}
       {% if firebase_config %}
-        <button type="button" class="btn btn-google w-100 py-2" id="googleSignIn">
-          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-          </svg>
-          <span>Continue with Google</span>
-        </button>
-        <p class="text-muted small text-center mt-2 mb-0">Use your <strong>@student.mes.ac.in</strong> or <strong>@mes.ac.in</strong> account.</p>
-        <div class="alert alert-danger small mt-3 mb-0 d-none" id="googleError" role="alert"></div>
-        <div class="divider-text">or log in with a password</div>
-      {% endif %}
+      {# Both ways of signing in go through Firebase Authentication. The browser
+         gets a signed ID token, which the server verifies in /firebase-login. #}
+      <button type="button" class="btn btn-google w-100 py-2" id="googleSignIn">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        <span>Continue with Google</span>
+      </button>
+      <p class="text-muted small text-center mt-2 mb-0">Use your <strong>@student.mes.ac.in</strong> or <strong>@mes.ac.in</strong> account.</p>
+      <div class="alert alert-danger small mt-3 mb-0 d-none" id="loginError" role="alert"></div>
+      <div class="divider-text">or log in with a password</div>
 
-      <form method="post" action="{{ url_for('auth.login') }}" novalidate id="loginForm">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <form novalidate id="loginForm">
+        <input type="hidden" name="csrf_token" id="csrfToken" value="{{ csrf_token() }}">
         <div class="mb-3">
           <label for="email" class="form-label">College email</label>
           <div class="input-group">
             <span class="input-group-text"><i class="bi bi-envelope"></i></span>
-            <input type="email" class="form-control" id="email" name="email" value="{{ email }}"
+            <input type="email" class="form-control" id="email" name="email"
                    placeholder="name@student.mes.ac.in" autocomplete="username" required autofocus>
           </div>
         </div>
@@ -94,21 +93,13 @@
             </button>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary w-100 py-2">Log in</button>
+        <button type="submit" class="btn btn-primary w-100 py-2" id="loginSubmit">Log in</button>
       </form>
-
-      {# Demo helpers: they only FILL the form. The role still comes from the database. #}
-      <div class="divider-text">Demo accounts</div>
-      <div class="demo-accounts">
-        <button type="button" class="demo-account" data-email="student@student.mes.ac.in" data-password="Student@123">
-          <span class="role"><i class="bi bi-mortarboard text-primary"></i>Student</span>
-          <span class="email">student@student.mes.ac.in</span>
-        </button>
-        <button type="button" class="demo-account" data-email="warden@mes.ac.in" data-password="Warden@123">
-          <span class="role"><i class="bi bi-shield-check text-success"></i>Warden</span>
-          <span class="email">warden@mes.ac.in</span>
-        </button>
+      {% else %}
+      <div class="alert alert-warning" role="alert">
+        Sign-in is not configured on this server: the Firebase settings are missing.
       </div>
+      {% endif %}
 
     </div>
   </section>
@@ -118,63 +109,116 @@
 {% block scripts %}
 {% if firebase_config %}
 <script type="module">
-  // Google sign-in with the Firebase JavaScript SDK (loaded from Google's CDN).
-  // The browser only receives a signed ID token here; the SERVER verifies it and decides the role.
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+  // Firebase Authentication handles both ways of signing in. HostelHub never sees
+  // the password: the browser sends only the signed ID token to our server, which
+  // verifies it and looks the person up in Firestore.
+  //
+  // The SDK is fetched when it is first needed, so the page itself opens instantly.
+  const SDK = "https://www.gstatic.com/firebasejs/12.19.0/";
+  let auth = null;
+  let sdk = null;
 
-  const firebaseApp = initializeApp({{ firebase_config|tojson }});
-  const auth = getAuth(firebaseApp);
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: "select_account" });   // always let the user pick an account
+  async function firebase() {
+    if (auth) return sdk;
+    const [appModule, authModule] = await Promise.all([
+      import(SDK + "firebase-app.js"),
+      import(SDK + "firebase-auth.js"),
+    ]);
+    sdk = authModule;
+    auth = authModule.getAuth(appModule.initializeApp({{ firebase_config|tojson }}));
+    return sdk;
+  }
 
-  const button = document.getElementById("googleSignIn");
-  const errorBox = document.getElementById("googleError");
-  const csrfToken = document.querySelector('#loginForm input[name="csrf_token"]').value;
-  const buttonHtml = button.innerHTML;
+  const errorBox = document.getElementById("loginError");
+  const googleButton = document.getElementById("googleSignIn");
+  const form = document.getElementById("loginForm");
+  const submitButton = document.getElementById("loginSubmit");
+  const csrfToken = document.getElementById("csrfToken").value;
+  const googleButtonHtml = googleButton.innerHTML;
 
   function showError(message) {
     errorBox.textContent = message;
     errorBox.classList.remove("d-none");
-    button.disabled = false;
-    button.innerHTML = buttonHtml;
+    googleButton.disabled = false;
+    googleButton.innerHTML = googleButtonHtml;
+    submitButton.disabled = false;
+    submitButton.textContent = "Log in";
   }
 
-  button.addEventListener("click", async function () {
+  function busy(button, text) {
     errorBox.classList.add("d-none");
     button.disabled = true;
-    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Signing in…';
-    try {
-      const result = await signInWithPopup(auth, provider);
-      const idToken = await result.user.getIdToken();
-      await signOut(auth);   // HostelHub's own session takes over from here
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>' + text;
+  }
 
-      const form = new FormData();
-      form.append("idToken", idToken);
-      form.append("csrf_token", csrfToken);
-      const response = await fetch("{{ url_for('auth.firebase_login') }}", { method: "POST", body: form });
-      const data = await response.json().catch(() => ({}));
-      if (response.ok && data.redirect) {
-        window.location.href = data.redirect;
-      } else {
-        showError(data.error || "Google sign-in failed. Please try again.");
-      }
+  // Send the Firebase ID token to HostelHub, which starts the session.
+  async function finishLogin(user) {
+    const idToken = await user.getIdToken();
+    await sdk.signOut(auth);              // HostelHub's own session takes over from here
+    const body = new FormData();
+    body.append("idToken", idToken);
+    body.append("csrf_token", csrfToken);
+    const response = await fetch("{{ url_for('auth.firebase_login') }}", { method: "POST", body });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.redirect) {
+      window.location.href = data.redirect;
+    } else {
+      showError(data.error || "Sign-in failed. Please try again.");
+    }
+  }
+
+  googleButton.addEventListener("click", async function () {
+    busy(googleButton, "Signing in…");
+    try {
+      const firebaseSdk = await firebase();
+      const provider = new firebaseSdk.GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });   // always let the user pick an account
+      const result = await firebaseSdk.signInWithPopup(auth, provider);
+      await finishLogin(result.user);
     } catch (error) {
       if (error.code === "auth/popup-closed-by-user" || error.code === "auth/cancelled-popup-request") {
         showError("Google sign-in was cancelled.");
       } else if (error.code === "auth/unauthorized-domain") {
-        showError("This website address is not allowed in Firebase. Open the app at http://localhost:5000 or add this domain in Firebase → Authentication → Settings → Authorized domains.");
+        showError("This website address is not allowed in Firebase. Add it under Authentication → Settings → Authorized domains.");
+      } else if (error.code === "auth/account-exists-with-different-credential") {
+        showError("This email already has a HostelHub password. Log in with your password below.");
       } else if (error.code === "auth/popup-blocked") {
         showError("Your browser blocked the Google pop-up. Allow pop-ups for this site and try again.");
       } else {
         console.error(error);
-        showError("Google sign-in failed. Please try again.");
+        showError("Google sign-in failed. Check your internet connection and try again.");
       }
     }
   });
-</script>
-{% endif %}
-<script>
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const email = document.getElementById("email");
+    const password = document.getElementById("password");
+    email.classList.toggle("is-invalid", !email.value.trim());
+    password.classList.toggle("is-invalid", !password.value);
+    if (!email.value.trim() || !password.value) return;
+
+    busy(submitButton, "Signing in…");
+    try {
+      const firebaseSdk = await firebase();
+      const credential = await firebaseSdk.signInWithEmailAndPassword(auth, email.value.trim(), password.value);
+      await finishLogin(credential.user);
+    } catch (error) {
+      if (["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found", "auth/invalid-email"]
+          .includes(error.code)) {
+        showError("Invalid email or password.");
+      } else if (error.code === "auth/user-disabled") {
+        showError("This account has been deactivated. Please contact the hostel office.");
+      } else if (error.code === "auth/too-many-requests") {
+        showError("Too many attempts. Please wait a minute and try again.");
+      } else {
+        console.error(error);
+        showError("Sign-in failed. Check your internet connection and try again.");
+      }
+    }
+  });
+
   // Show / hide the password text.
   document.getElementById("togglePassword").addEventListener("click", function () {
     const input = document.getElementById("password");
@@ -182,24 +226,6 @@
     input.type = showing ? "password" : "text";
     this.querySelector("i").className = showing ? "bi bi-eye" : "bi bi-eye-slash";
   });
-
-  // Clicking a demo card fills in its email and password.
-  document.querySelectorAll(".demo-account").forEach(function (card) {
-    card.addEventListener("click", function () {
-      document.getElementById("email").value = card.dataset.email;
-      document.getElementById("password").value = card.dataset.password;
-      document.getElementById("password").focus();
-    });
-  });
-
-  // Simple client-side check before sending (the server checks again).
-  document.getElementById("loginForm").addEventListener("submit", function (event) {
-    const email = document.getElementById("email");
-    const password = document.getElementById("password");
-    email.classList.toggle("is-invalid", !email.value.trim());
-    password.classList.toggle("is-invalid", !password.value);
-    if (!email.value.trim() || !password.value) event.preventDefault();
-  });
 </script>
-
+{% endif %}
 {% endblock %}

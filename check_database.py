@@ -1,88 +1,141 @@
 """
 check_database.py — Look for inconsistent data in the HostelHub database.
 
-Run it any time (for example after a demo) to prove the data is still correct:
+Run it any time to prove the live Firestore data is still correct:
 
     python check_database.py
 
-Each check is a SQL query that should return NO rows. If a query returns
-rows, something broke a hostel rule and the problem is printed.
-The automated tests also call find_problems() after every test.
+Each check looks for records that break a hostel rule. A correct database
+produces no problems at all. The automated tests call find_problems() after
+every test.
 """
 
 import sys
 
-from config import Config
-from database import connect, is_postgres, run
+from dotenv import load_dotenv
 
-# (description, SQL that returns the broken rows)
-CHECKS = [
-    ("Student with more than one active allocation",
-     """SELECT student_id AS problem_id FROM allocations WHERE status = 'active'
-        GROUP BY student_id HAVING COUNT(*) > 1"""),
-    ("Bed with more than one active allocation",
-     """SELECT bed_id AS problem_id FROM allocations WHERE status = 'active'
-        GROUP BY bed_id HAVING COUNT(*) > 1"""),
-    ("Bed marked occupied but nobody is allocated to it",
-     """SELECT beds.id AS problem_id FROM beds
-        WHERE beds.status = 'occupied'
-          AND NOT EXISTS (SELECT 1 FROM allocations a WHERE a.bed_id = beds.id AND a.status = 'active')"""),
-    ("Active allocation on a bed that is not marked occupied",
-     """SELECT a.id AS problem_id FROM allocations a JOIN beds ON beds.id = a.bed_id
-        WHERE a.status = 'active' AND beds.status != 'occupied'"""),
-    ("Active allocation for a warden or a deactivated student",
-     """SELECT a.id AS problem_id FROM allocations a JOIN users ON users.id = a.student_id
-        WHERE a.status = 'active' AND (users.role != 'student' OR users.is_active = 0)"""),
-    ("Bed marked reserved but no pending request is holding it",
-     """SELECT beds.id AS problem_id FROM beds
-        WHERE beds.status = 'reserved'
-          AND NOT EXISTS (SELECT 1 FROM room_change_requests r
-                          WHERE r.requested_bed_id = beds.id AND r.status = 'Pending')"""),
-    ("Pending request whose preferred bed is not reserved",
-     """SELECT r.id AS problem_id FROM room_change_requests r JOIN beds ON beds.id = r.requested_bed_id
-        WHERE r.status = 'Pending' AND beds.status != 'reserved'"""),
-    ("Room whose number of beds does not match its capacity",
-     """SELECT rooms.id AS problem_id FROM rooms LEFT JOIN beds ON beds.room_id = rooms.id
-        GROUP BY rooms.id HAVING COUNT(beds.id) != rooms.capacity"""),
-    ("Inactive room with a bed that is still usable or in use",
-     """SELECT beds.id AS problem_id FROM beds JOIN rooms ON rooms.id = beds.room_id
-        WHERE rooms.status = 'inactive' AND beds.status IN ('available', 'occupied', 'reserved')"""),
-    ("Resolved complaint without a resolved time",
-     "SELECT id AS problem_id FROM complaints WHERE status = 'Resolved' AND resolved_at IS NULL"),
-    ("Ended allocation without an end time",
-     "SELECT id AS problem_id FROM allocations WHERE status = 'ended' AND ended_at IS NULL"),
-]
+# Read .env BEFORE config.py, which takes the Firebase settings from the environment.
+load_dotenv()
+
+from config import COMPLAINT_STATUSES, ROOM_CHANGE_STATUSES, ROOM_STATUSES  # noqa: E402
+from data import create_store  # noqa: E402
+
+BED_STATUSES = ("available", "occupied", "reserved", "maintenance", "unavailable")
 
 
-def find_problems(conn):
-    """Return a list of human-readable problems (an empty list means all good).
+def find_problems(store):
+    """Return a list of human-readable problems (an empty list means all good)."""
+    users = {row["id"]: row for row in store.all("users")}
+    rooms = {row["id"]: row for row in store.all("rooms")}
+    beds = {row["id"]: row for row in store.all("beds")}
+    allocations = store.all("allocations")
+    requests = store.all("room_change_requests")
+    complaints = store.all("complaints")
 
-    Works with a SQLite or a PostgreSQL connection from database.connect().
-    """
+    active = [row for row in allocations if row["status"] == "active"]
+    active_by_bed, active_by_student = {}, {}
     problems = []
-    for description, sql in CHECKS:
-        rows = run(conn, sql).fetchall()
-        if rows:
-            ids = ", ".join(str(row["problem_id"]) for row in rows[:10])
-            problems.append(f"{description}: {ids}")
 
-    if not is_postgres(conn):
-        # SQLite's own check: rows whose foreign key points to a missing parent row.
-        # (PostgreSQL never allows such rows to exist, so it needs no extra check.)
-        for row in run(conn, "PRAGMA foreign_key_check").fetchall():
-            problems.append(f"Broken foreign key: {row[0]} row {row[1]} points to a missing {row[2]} row")
+    def report(description, broken_ids):
+        if broken_ids:
+            listed = ", ".join(str(value) for value in sorted(set(broken_ids))[:5])
+            problems.append(f"{description}: {len(set(broken_ids))} found (ids: {listed})")
+
+    # 1 and 2: the two "only one active allocation" rules.
+    duplicate_students, duplicate_beds = [], []
+    for allocation in active:
+        if allocation["student_id"] in active_by_student:
+            duplicate_students.append(allocation["student_id"])
+        active_by_student[allocation["student_id"]] = allocation
+        if allocation["bed_id"] in active_by_bed:
+            duplicate_beds.append(allocation["bed_id"])
+        active_by_bed[allocation["bed_id"]] = allocation
+    report("Student with more than one active allocation", duplicate_students)
+    report("Bed with more than one active allocation", duplicate_beds)
+
+    # 3 and 4: bed status and allocations must agree.
+    report("Bed marked occupied but nobody is allocated to it",
+           [bed["id"] for bed in beds.values() if bed["status"] == "occupied" and bed["id"] not in active_by_bed])
+    report("Active allocation on a bed that is not marked occupied",
+           [allocation["id"] for allocation in active
+            if beds.get(allocation["bed_id"], {}).get("status") != "occupied"])
+
+    # 5: only active students may hold a bed.
+    report("Active allocation for a warden or a deactivated student",
+           [allocation["id"] for allocation in active
+            if users.get(allocation["student_id"], {}).get("role") != "student"
+            or not users.get(allocation["student_id"], {}).get("is_active")])
+
+    # 6 and 7: a reserved bed belongs to exactly one pending request.
+    reserved_for = {row["requested_bed_id"] for row in requests
+                    if row["status"] == "Pending" and row.get("requested_bed_id")}
+    report("Bed marked reserved but no pending request is holding it",
+           [bed["id"] for bed in beds.values() if bed["status"] == "reserved" and bed["id"] not in reserved_for])
+    report("Pending request whose preferred bed is not reserved",
+           [row["id"] for row in requests if row["status"] == "Pending" and row.get("requested_bed_id")
+            and beds.get(row["requested_bed_id"], {}).get("status") != "reserved"])
+
+    # 8: every room has exactly as many beds as its capacity.
+    beds_per_room = {}
+    for bed in beds.values():
+        beds_per_room[bed["room_id"]] = beds_per_room.get(bed["room_id"], 0) + 1
+    report("Room whose number of beds does not match its capacity",
+           [room["id"] for room in rooms.values() if beds_per_room.get(room["id"], 0) != room["capacity"]])
+
+    # 9: a closed room cannot have usable beds.
+    report("Inactive room with a bed that is still usable or in use",
+           [bed["id"] for bed in beds.values()
+            if rooms.get(bed["room_id"], {}).get("status") == "inactive"
+            and bed["status"] in ("available", "occupied", "reserved")])
+
+    # 10 and 11: finished records must carry their finishing time.
+    report("Resolved complaint without a resolved time",
+           [row["id"] for row in complaints if row["status"] == "Resolved" and not row.get("resolved_at")])
+    report("Ended allocation without an end time",
+           [row["id"] for row in allocations if row["status"] == "ended" and not row.get("ended_at")])
+
+    # 12: Firestore has no foreign keys, so references to missing documents are looked for here.
+    report("Record pointing to a user, bed or room that does not exist",
+           [f"allocation {row['id']}" for row in allocations
+            if row["student_id"] not in users or row["bed_id"] not in beds]
+           + [f"complaint {row['id']}" for row in complaints
+              if row["student_id"] not in users or row.get("room_id") not in rooms]
+           + [f"bed {bed['id']}" for bed in beds.values() if bed["room_id"] not in rooms]
+           + [f"request {row['id']}" for row in requests if row["student_id"] not in users])
+
+    # 13: and no CHECK constraints, so the allowed values are looked at here.
+    report("Record with a value that is not allowed",
+           [f"user {row['id']}" for row in users.values() if row.get("role") not in ("student", "warden")]
+           + [f"bed {row['id']}" for row in beds.values() if row.get("status") not in BED_STATUSES]
+           + [f"room {row['id']}" for row in rooms.values() if row.get("status") not in ROOM_STATUSES]
+           + [f"allocation {row['id']}" for row in allocations if row.get("status") not in ("active", "ended")]
+           + [f"complaint {row['id']}" for row in complaints if row.get("status") not in COMPLAINT_STATUSES]
+           + [f"request {row['id']}" for row in requests if row.get("status") not in ROOM_CHANGE_STATUSES])
+
     return problems
 
 
-if __name__ == "__main__":
-    # Checks the local SQLite file, or the PostgreSQL database if DATABASE_URL is set.
-    connection = connect(Config.DATABASE_URL, Config.DATABASE)
-    found = find_problems(connection)
-    connection.close()
-    engine = "PostgreSQL" if Config.DATABASE_URL else "SQLite"
-    if found:
-        print(f"Problems found ({engine}):")
-        for problem in found:
+TOTAL_CHECKS = 13
+
+
+def main():
+    store = create_store()
+    name = "Firestore"
+    try:
+        problems = find_problems(store)
+    finally:
+        store.close()
+
+    if problems:
+        print(f"{name} database has {len(problems)} problem(s):")
+        for problem in problems:
             print("  -", problem)
-        sys.exit(1)
-    print(f"{engine} database is consistent: all {len(CHECKS)} checks passed.")
+        return 1
+    print(f"{name} database is consistent: all {TOTAL_CHECKS} checks passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    import app as hostelhub_app              # starts the Firebase Admin SDK from the settings
+    _ = hostelhub_app.app
+    sys.exit(main())

@@ -2,17 +2,17 @@
 app.py — Starting point of HostelHub.
 
 Run with:   python app.py
-Then open:  http://127.0.0.1:5000
+Then open:  http://localhost:5000
 
 This file:
   1. creates the Flask app and loads settings from config.py
-  2. creates the database with demo data on the very first run
+  2. starts Firebase (Authentication and Firestore) and refuses to
+     start without it, because Firebase is the only database
   3. registers the route files (blueprints)
   4. adds template helpers (date formatting, notification counts)
   5. registers friendly error pages
 """
 
-import os
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -22,9 +22,10 @@ load_dotenv()
 
 from flask import Flask, g, redirect, render_template, url_for
 
-import database
-from config import Config, OPEN_COMPLAINT_STATUSES, check_production_settings
-from database import local_now, query_all, query_one
+import data
+from config import Config, check_production_settings
+from data import local_now
+from data.queries import dashboard_data, notifications_for, unread_notification_count
 from routes.account import account_bp
 from routes.auth import auth_bp, home_url_for, init_firebase
 from routes.college import college_bp
@@ -33,7 +34,6 @@ from routes.requests import requests_bp
 from routes.rooms import rooms_bp
 from routes.student import student_bp
 from routes.warden import warden_bp
-from seed import seed_database
 
 # Static files (CSS, JavaScript, logo) live in public/static/.
 # - On Vercel, everything inside public/ is served directly by Vercel's CDN,
@@ -42,21 +42,16 @@ from seed import seed_database
 app = Flask(__name__, static_folder="public/static", static_url_path="/static")
 app.config.from_object(Config)
 
-# Stop immediately with a clear message instead of running production unsafely
-# (for example with the public development secret key).
+# Stop immediately with a clear message instead of running with missing settings
+# (for example without Firebase credentials, or with the public development secret key).
 config_problems = check_production_settings(app.config)
 if config_problems:
-    raise RuntimeError("HostelHub production configuration error: " + " ".join(config_problems))
-database.init_app(app)
+    raise RuntimeError("HostelHub configuration error: " + " ".join(config_problems))
+data.init_app(app)
 
-# Google sign-in: start the Firebase Admin SDK if its secret key was provided.
+# Firebase is Authentication and Firestore. Without it there
+# is nothing to read or write, so this raises instead of falling back to anything.
 init_firebase(app)
-
-# First LOCAL run: no SQLite file yet -> build it with demo data.
-# A hosted PostgreSQL database is NEVER seeded automatically (that would wipe real
-# data on every start); it is set up once with `python seed.py` instead.
-if not app.config["DATABASE_URL"] and not os.path.exists(app.config["DATABASE"]):
-    seed_database(app.config["DATABASE"])
 
 # Each blueprint is a group of related routes kept in its own file.
 for blueprint in (auth_bp, account_bp, student_bp, warden_bp, rooms_bp,
@@ -125,22 +120,13 @@ def inject_layout_data():
         return {}
 
     user_id = g.user["id"]
-    unread = query_one("SELECT COUNT(*) AS total FROM notifications WHERE user_id = ? AND is_read = 0",
-                       (user_id,))["total"]
-    latest = query_all(
-        "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 5",
-        (user_id,),
-    )
+    unread = unread_notification_count(user_id)
+    latest = notifications_for(user_id, limit=5)
     nav_counts = {}
     if g.user["role"] == "warden":
-        placeholders = ", ".join("?" for _ in OPEN_COMPLAINT_STATUSES)
-        nav_counts["complaints"] = query_one(
-            f"SELECT COUNT(*) AS total FROM complaints WHERE status IN ({placeholders})",
-            OPEN_COMPLAINT_STATUSES,
-        )["total"]
-        nav_counts["requests"] = query_one(
-            "SELECT COUNT(*) AS total FROM room_change_requests WHERE status = 'Pending'"
-        )["total"]
+        totals = dashboard_data()
+        nav_counts["complaints"] = totals["pending_complaints"]
+        nav_counts["requests"] = totals["pending_requests"]
     return {"unread_count": unread, "latest_notifications": latest, "nav_counts": nav_counts}
 
 

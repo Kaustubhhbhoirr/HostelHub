@@ -1,8 +1,11 @@
-"""Student CRUD, room CRUD, college requests, notifications, dashboard numbers, search and seed data."""
+"""Student CRUD, room CRUD, college requests, notifications, dashboard numbers, search; no seed data."""
 
+import os
 import unittest
+from unittest import mock
 
 from base import HostelHubTestCase
+from fixtures import STUDENT_EMAIL
 from routes.warden import percent
 
 
@@ -16,16 +19,36 @@ class StudentCrudTests(HostelHubTestCase):
         self.post("/warden/students/new", self.FORM)
         created = self.one("SELECT * FROM users WHERE email = 'test.student@student.mes.ac.in'")
         self.assertEqual((created["role"], created["student_id"]), ("student", "26CE999"))
-        self.assertNotEqual(created["password_hash"], "Password123")
+        # The password went to Firebase Authentication, never into Firestore.
+        self.assertNotIn("password", created)
+        account = self.auth.accounts[created["firebase_uid"]]
+        self.assertEqual((account.email, account.password, account.email_verified),
+                         ("test.student@student.mes.ac.in", self.FORM["password"], True))
 
         self.post(f"/warden/students/{created['id']}/edit", {**self.FORM, "name": "Renamed Student", "password": ""})
         updated = self.one("SELECT * FROM users WHERE id = ?", (created["id"],))
         self.assertEqual(updated["name"], "Renamed Student")
-        self.assertEqual(updated["password_hash"], created["password_hash"])   # blank = keep password
+        self.assertEqual(account.password, self.FORM["password"])          # blank = keep password
+
+        # A new email address is also given to the sign-in account.
+        self.post(f"/warden/students/{created['id']}/edit",
+                  {**self.FORM, "email": "renamed@student.mes.ac.in", "password": "NewPass123"})
+        self.assertEqual((account.email, account.password), ("renamed@student.mes.ac.in", "NewPass123"))
+        self.assertEqual(self.document("users", created["id"])["email"], "renamed@student.mes.ac.in")
 
         response = self.post(f"/warden/students/{created['id']}/delete", follow_redirects=True)
         self.assertIn(b"was deleted", response.data)
         self.assertIsNone(self.one("SELECT id FROM users WHERE id = ?", (created["id"],)))
+        self.assertEqual(self.auth.accounts, {})                           # sign-in account removed too
+
+    def test_failed_save_does_not_leave_a_sign_in_account(self):
+        from data.store import StoreError
+
+        self.login_warden()
+        with mock.patch("data.firestore_store.FirestoreStore.commit", side_effect=StoreError("down")):
+            response = self.post("/warden/students/new", self.FORM)
+        self.assertIn(b"could not be saved", response.data)
+        self.assertEqual(self.auth.accounts, {})
 
     def test_invalid_student_forms(self):
         self.login_warden()
@@ -42,7 +65,7 @@ class StudentCrudTests(HostelHubTestCase):
             ({"year_of_study": "7"}, b"year of study"),
             ({"password": "short"}, b"at least 8 characters"),
             ({"name": ""}, b"full name"),
-            ({"email": "student@student.mes.ac.in", "student_id": "NEW001"}, b"already uses this email"),
+            ({"email": STUDENT_EMAIL, "student_id": "NEW001"}, b"already uses this email"),
             ({"student_id": "25CE001"}, b"already has this student ID"),
         ]
         for change, message in cases:
@@ -101,8 +124,7 @@ class RoomCrudTests(HostelHubTestCase):
 
     def test_room_rules(self):
         self.login_warden()
-        occupied_room = self.one("""SELECT rooms.* FROM rooms JOIN beds ON beds.room_id = rooms.id
-                                    WHERE beds.status = 'occupied' LIMIT 1""")
+        occupied_room = self.document("rooms", self.document("beds", self.bed_with_status("occupied"))["room_id"])
         form = {"block": occupied_room["block"], "floor": str(occupied_room["floor"]),
                 "room_number": occupied_room["room_number"], "capacity": str(occupied_room["capacity"])}
         self.assertIn(b"Move the students out first", self.post(f"/warden/rooms/{occupied_room['id']}/edit",
@@ -257,25 +279,13 @@ class DashboardTests(HostelHubTestCase):
         self.assertIn(b"not been allocated a room yet", self.client.get("/student/dashboard").data)
 
 
-class SeedDataTests(HostelHubTestCase):
+class NoSeedDataTests(unittest.TestCase):
+    """The application ships no sample hostel: the real data is created in Firebase."""
 
-    def test_demo_data_matches_the_documentation(self):
-        self.assertEqual(self.count("SELECT COUNT(DISTINCT block) FROM rooms"), 3)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM rooms"), 32)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM beds"), 100)
-        # 72 demo students + 1 Google sign-in team account (seed.GOOGLE_STUDENTS)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'student'"), 73)
-        self.assertEqual(len(self.unallocated_student_ids()), 5)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM room_change_requests WHERE status = 'Pending'"), 2)
-        statuses = {row["status"] for row in self.all("SELECT DISTINCT status FROM complaints")}
-        self.assertEqual(statuses, {"Submitted", "Acknowledged", "In Progress", "Resolved", "Rejected"})
-        bed_statuses = {row["status"] for row in self.all("SELECT DISTINCT status FROM beds")}
-        self.assertEqual(bed_statuses, {"available", "occupied", "reserved", "maintenance", "unavailable"})
-        # Every student uses @student.mes.ac.in; the warden uses @mes.ac.in.
-        self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'student' "
-                                    "AND email NOT LIKE '%@student.mes.ac.in'"), 0)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM users WHERE role = 'warden' "
-                                    "AND email NOT LIKE '%@mes.ac.in'"), 0)
+    def test_no_seed_script_or_local_database(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for name in ("seed.py", "database.py", "view_data.py", "database"):
+            self.assertFalse(os.path.exists(os.path.join(root, name)), name)
 
 
 if __name__ == "__main__":

@@ -55,25 +55,88 @@
     <div class="card">
       <div class="card-header"><h5 class="card-title">Change password</h5></div>
       <div class="card-body">
-        <form method="post" action="{{ url_for('account.change_password') }}" class="row g-3">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="col-12">
+        {# The password is stored by Firebase Authentication, so it is changed in the
+           browser: first prove the current password, then set the new one. #}
+        {% if firebase_config %}
+        <form id="passwordForm" class="row g-3" novalidate>
+          <div class="col-md-6">
             <label class="form-label" for="current_password">Current password</label>
-            <input type="password" class="form-control" id="current_password" name="current_password" required autocomplete="current-password">
+            <input type="password" class="form-control" id="current_password" required autocomplete="current-password">
           </div>
-          <div class="col-sm-6">
+          <div class="col-md-6">
             <label class="form-label" for="new_password">New password</label>
-            <input type="password" class="form-control" id="new_password" name="new_password" minlength="8" required autocomplete="new-password">
-            <div class="form-text">At least 8 characters.</div>
+            <input type="password" class="form-control" id="new_password" minlength="8" required autocomplete="new-password">
           </div>
-          <div class="col-sm-6">
+          <div class="col-md-6">
             <label class="form-label" for="confirm_password">Confirm new password</label>
-            <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="8" required autocomplete="new-password">
+            <input type="password" class="form-control" id="confirm_password" minlength="8" required autocomplete="new-password">
           </div>
-          <div class="col-12"><button class="btn btn-primary" type="submit">Update password</button></div>
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit" id="passwordSubmit">Update password</button>
+          </div>
+          <div class="col-12">
+            <div class="alert small mb-0 d-none" id="passwordMessage" role="alert"></div>
+          </div>
         </form>
+        {% else %}
+        <p class="text-muted mb-0">Password changes are handled by the college Firebase account.</p>
+        {% endif %}
+      </div>
       </div>
     </div>
   </div>
 </div>
 {% endblock %}
+
+{% if firebase_config %}
+{% block scripts %}
+<script type="module">
+  // Changing a password means re-signing in with the old one and then asking
+  // Firebase to replace it. HostelHub never sees either password.
+  const SDK = "https://www.gstatic.com/firebasejs/12.19.0/";
+  const form = document.getElementById("passwordForm");
+  const message = document.getElementById("passwordMessage");
+  const submit = document.getElementById("passwordSubmit");
+
+  function show(text, kind) {
+    message.textContent = text;
+    message.className = `alert small mb-0 alert-${kind}`;
+  }
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const current = document.getElementById("current_password").value;
+    const next = document.getElementById("new_password").value;
+    const confirm = document.getElementById("confirm_password").value;
+    if (next.length < 8) return show("The new password must be at least 8 characters long.", "danger");
+    if (next !== confirm) return show("The new passwords do not match.", "danger");
+
+    submit.disabled = true;
+    try {
+      const [app, auth] = await Promise.all([
+        import(SDK + "firebase-app.js"),
+        import(SDK + "firebase-auth.js"),
+      ]);
+      const firebaseAuth = auth.getAuth(app.initializeApp({{ firebase_config|tojson }}));
+      const credential = await auth.signInWithEmailAndPassword(firebaseAuth, {{ g.user["email"]|tojson }}, current);
+      await auth.updatePassword(credential.user, next);
+      await auth.signOut(firebaseAuth);
+      form.reset();
+      show("Password changed successfully.", "success");
+    } catch (error) {
+      if (error.code === "auth/wrong-password" || error.code === "auth/invalid-credential") {
+        show("Your current password is incorrect.", "danger");
+      } else if (error.code === "auth/weak-password") {
+        show("Please choose a longer password.", "danger");
+      } else if (error.code === "auth/operation-not-allowed" || error.code === "auth/user-not-found") {
+        show("This account signs in with Google, so it has no password to change.", "warning");
+      } else {
+        show("The password could not be changed. Check your internet connection and try again.", "danger");
+      }
+    } finally {
+      submit.disabled = false;
+    }
+  });
+</script>
+{% endblock %}
+{% endif %}

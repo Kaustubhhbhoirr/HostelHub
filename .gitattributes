@@ -1,5 +1,5 @@
 # Store and check out text files with LF line endings on every OS,
-# so Linux servers (Render, Vercel) and tests see the same bytes as Windows.
+# so Linux servers (Vercel) and tests see the same bytes as Windows.
 * text=auto eol=lf
 
 # Binary files: never touch

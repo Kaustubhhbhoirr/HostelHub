@@ -8,15 +8,21 @@ Contents:
   4. Image uploads      -> save_complaint_image(), complaint_image_exists(), delete_complaint_image()
 
 IMPORTANT: none of these functions call commit(). The route that uses them
-commits once at the end. If anything fails, the route calls rollback() and
-the database goes back to how it was before (a "transaction").
+commits once at the end. If anything fails, the route calls rollback() and the
+database goes back to how it was before (a "transaction").
+
+The two allocation rules ("one active allocation per bed" and "one per student")
+are checked here in Python AND enforced by Firestore itself: the store keeps a
+small guard document per rule, which cannot be created twice, so two wardens
+allocating the same bed at the same moment cannot both succeed.
 """
 
 import uuid
 
 import storage
 from config import ALLOWED_IMAGE_EXTENSIONS
-from database import execute, now_str, query_all, query_one
+from data import get_store, now_str
+from data.queries import get_active_allocation, get_bed, occupant_of_bed
 
 
 class InvalidAllocationError(Exception):
@@ -33,49 +39,21 @@ class InvalidAllocationError(Exception):
 
 def create_notification(user_id, title, message, notif_type="system", link=None):
     """Store one notification for one user."""
-    execute(
-        """INSERT INTO notifications (user_id, title, message, type, link, is_read, created_at)
-           VALUES (?, ?, ?, ?, ?, 0, ?)""",
-        (user_id, title, message, notif_type, link, now_str()),
-    )
+    get_store().insert("notifications", {
+        "user_id": user_id, "title": title, "message": message, "type": notif_type,
+        "link": link, "is_read": 0, "created_at": now_str(),
+    })
 
 
 def notify_wardens(title, message, notif_type="system", link=None):
     """Send the same notification to every active warden."""
-    wardens = query_all("SELECT id FROM users WHERE role = 'warden' AND is_active = 1")
-    for warden in wardens:
+    for warden in get_store().find("users", role="warden", is_active=1):
         create_notification(warden["id"], title, message, notif_type, link)
 
 
 # ------------------------------------------------------------------
 # 2. Bed allocation
 # ------------------------------------------------------------------
-
-def get_active_allocation(student_id):
-    """Return the student's current bed + room details, or None if they have no bed."""
-    return query_one(
-        """SELECT allocations.id AS allocation_id, allocations.allocated_at,
-                  beds.id AS bed_id, beds.bed_number,
-                  rooms.id AS room_id, rooms.block, rooms.floor, rooms.room_number,
-                  rooms.capacity, rooms.status AS room_status
-           FROM allocations
-           JOIN beds  ON beds.id  = allocations.bed_id
-           JOIN rooms ON rooms.id = beds.room_id
-           WHERE allocations.student_id = ? AND allocations.status = 'active'""",
-        (student_id,),
-    )
-
-
-def get_bed(bed_id):
-    """Return a bed together with its room details, or None."""
-    return query_one(
-        """SELECT beds.id, beds.bed_number, beds.status, rooms.id AS room_id, rooms.block,
-                  rooms.floor, rooms.room_number, rooms.status AS room_status
-           FROM beds JOIN rooms ON rooms.id = beds.room_id
-           WHERE beds.id = ?""",
-        (bed_id,),
-    )
-
 
 def bed_label(bed):
     """Human readable bed name, e.g. 'A-201 · Bed 2'."""
@@ -88,7 +66,8 @@ def allocate_bed(student_id, bed_id, allow_reserved=False):
     allow_reserved=True is used only when approving a room-change request,
     because the requested bed was reserved for that same student.
     """
-    student = query_one("SELECT id, role, is_active FROM users WHERE id = ?", (student_id,))
+    store = get_store()
+    student = store.get("users", student_id)
     if student is None or student["role"] != "student":
         raise InvalidAllocationError("Student not found.")
     if not student["is_active"]:
@@ -107,24 +86,29 @@ def allocate_bed(student_id, bed_id, allow_reserved=False):
     if get_active_allocation(student_id) is not None:
         raise InvalidAllocationError("This student already has a bed. Vacate it first or use a room change.")
 
+    # Take both "only one" slots. If another request took one a moment ago, the
+    # store raises DuplicateError and the route rolls everything back.
+    store.claim(f"bed-{bed_id}")
+    store.claim(f"student-{student_id}")
+
     # Two related changes: a new allocation row AND the bed becomes occupied.
-    execute(
-        "INSERT INTO allocations (student_id, bed_id, allocated_at, status) VALUES (?, ?, ?, 'active')",
-        (student_id, bed_id, now_str()),
-    )
-    execute("UPDATE beds SET status = 'occupied' WHERE id = ?", (bed_id,))
+    store.insert("allocations", {"student_id": student_id, "bed_id": bed_id,
+                                 "allocated_at": now_str(), "ended_at": None, "status": "active"})
+    store.update("beds", bed_id, {"status": "occupied"})
     return bed
 
 
 def vacate_bed(student_id):
     """End the student's active allocation and make their bed available again."""
+    store = get_store()
     allocation = get_active_allocation(student_id)
     if allocation is None:
         raise InvalidAllocationError("This student does not have a bed to vacate.")
 
-    execute("UPDATE allocations SET status = 'ended', ended_at = ? WHERE id = ?",
-            (now_str(), allocation["allocation_id"]))
-    execute("UPDATE beds SET status = 'available' WHERE id = ?", (allocation["bed_id"],))
+    store.update("allocations", allocation["allocation_id"], {"status": "ended", "ended_at": now_str()})
+    store.update("beds", allocation["bed_id"], {"status": "available"})
+    store.release(f"bed-{allocation['bed_id']}")
+    store.release(f"student-{student_id}")
     return allocation
 
 
@@ -148,8 +132,12 @@ def move_student(student_id, new_bed_id, allow_reserved=False):
 
 def release_reserved_bed(bed_id):
     """A reserved bed goes back to available (only if it is still reserved)."""
-    if bed_id:
-        execute("UPDATE beds SET status = 'available' WHERE id = ? AND status = 'reserved'", (bed_id,))
+    if not bed_id:
+        return
+    store = get_store()
+    bed = store.get("beds", bed_id)
+    if bed and bed["status"] == "reserved":
+        store.update("beds", bed_id, {"status": "available"})
 
 
 def cancel_pending_room_requests(student_id, remark):
@@ -158,16 +146,12 @@ def cancel_pending_room_requests(student_id, remark):
     Used when the warden vacates, deactivates or deletes the student,
     because the pending request no longer makes sense.
     """
-    pending = query_all(
-        "SELECT id, requested_bed_id FROM room_change_requests WHERE student_id = ? AND status = 'Pending'",
-        (student_id,),
-    )
+    store = get_store()
+    pending = store.find("room_change_requests", student_id=student_id, status="Pending")
     for request_row in pending:
-        release_reserved_bed(request_row["requested_bed_id"])
-        execute(
-            "UPDATE room_change_requests SET status = 'Cancelled', warden_remarks = ?, updated_at = ? WHERE id = ?",
-            (remark, now_str(), request_row["id"]),
-        )
+        release_reserved_bed(request_row.get("requested_bed_id"))
+        store.update("room_change_requests", request_row["id"],
+                     {"status": "Cancelled", "warden_remarks": remark, "updated_at": now_str()})
     return len(pending)
 
 
@@ -200,6 +184,10 @@ def has_image_signature(file):
     return is_webp or header.startswith(IMAGE_SIGNATURES)
 
 
+class PhotosDisabled(ValueError):
+    """A photo was sent, but this server does not store photos (COMPLAINT_IMAGE_STORAGE=none)."""
+
+
 def save_complaint_image(file):
     """Save an uploaded complaint image and return the generated file name.
 
@@ -208,6 +196,8 @@ def save_complaint_image(file):
     """
     if file is None or file.filename == "":
         return None
+    if not storage.images_enabled():
+        raise PhotosDisabled("Photo uploads are not available on this server.")
 
     # Three checks: the file name extension, the type reported by the browser,
     # and the real content of the file.
@@ -221,8 +211,8 @@ def save_complaint_image(file):
     extension = file.filename.rsplit(".", 1)[1].lower()
     new_filename = f"{uuid.uuid4().hex}.{extension}"
 
-    # storage.py decides WHERE it goes: the local uploads folder, or the private
-    # Supabase bucket in deployment.
+    # storage.py decides WHERE it goes (the local uploads folder, or nowhere when
+    # photo uploads are switched off on this server).
     try:
         storage.save_file(new_filename, file.read(), file.mimetype)
     except storage.StorageError:

@@ -5,6 +5,7 @@ import os
 import unittest
 
 from base import HostelHubTestCase, TINY_PNG, app
+from fixtures import COMPLAINTS
 
 
 class ComplaintUploadTests(HostelHubTestCase):
@@ -22,8 +23,7 @@ class ComplaintUploadTests(HostelHubTestCase):
         self.assertEqual(complaint["student_id"], self.demo_student_id())
         # Only a generated file name is stored — not the user's name and not the bytes.
         self.assertRegex(complaint["image_path"], r"^[0-9a-f]{32}\.png$")
-        saved = os.path.join(app.config["UPLOAD_FOLDER"], complaint["image_path"])
-        self.assertTrue(os.path.isfile(saved))
+        self.assertEqual(self.stored_photos(), [complaint["image_path"]])
 
         # The owner can open the image through the protected route.
         response = self.client.get(f"/complaints/{complaint['id']}/image")
@@ -73,14 +73,13 @@ class ComplaintUploadTests(HostelHubTestCase):
             response = self.upload_complaint(image=bad)
             self.assertIn(b"Only PNG, JPG", response.data, bad[1])
         self.assertEqual(self.count("SELECT COUNT(*) FROM complaints"), before)
-        folder = app.config["UPLOAD_FOLDER"]
-        self.assertEqual(os.listdir(folder) if os.path.isdir(folder) else [], [])
+        self.assertEqual(self.stored_photos(), [])
 
     def test_missing_image_file_does_not_break_the_page(self):
         self.login_student()
         self.upload_complaint(image=(io.BytesIO(TINY_PNG), "a.png", "image/png"))
         complaint = self.latest_complaint()
-        os.remove(os.path.join(app.config["UPLOAD_FOLDER"], complaint["image_path"]))
+        os.remove(os.path.join(self.upload_folder, complaint["image_path"]))
         response = self.client.get(f"/student/complaints/{complaint['id']}")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"no longer available", response.data)
@@ -115,8 +114,8 @@ class ComplaintUploadTests(HostelHubTestCase):
         before = self.count("SELECT COUNT(*) FROM notifications")
         self.login_student()
         self.upload_complaint()
-        new_rows = self.all("SELECT notifications.*, users.role FROM notifications JOIN users ON users.id = user_id "
-                            "ORDER BY notifications.id DESC LIMIT ?", (self.count("SELECT COUNT(*) FROM notifications") - before,))
+        rows = sorted(self.documents("notifications"), key=lambda row: row["id"])[before:]
+        new_rows = [{**row, "role": self.document("users", row["user_id"])["role"]} for row in rows]
         recipients = sorted((row["role"], row["user_id"]) for row in new_rows)
         wardens = self.count("SELECT COUNT(*) FROM users WHERE role = 'warden'")
         self.assertEqual(len(new_rows), 1 + wardens)
@@ -179,7 +178,7 @@ class ComplaintWorkflowTests(HostelHubTestCase):
             response = self.client.get("/warden/complaints" + query)
             self.assertEqual(response.status_code, 200, query)
         self.assertIn(b"No complaints match", self.client.get("/warden/complaints?q=zzzz-no-match").data)
-        self.assertEqual(self.count("SELECT COUNT(*) FROM complaints"), 13)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM complaints"), len(COMPLAINTS))
 
 
 if __name__ == "__main__":

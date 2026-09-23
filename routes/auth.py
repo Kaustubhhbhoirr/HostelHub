@@ -1,56 +1,55 @@
 """
 routes/auth.py — Login, logout and page protection.
 
-There are two ways to prove who you are, and both end the same way:
+Firebase Authentication is the only place where credentials live. HostelHub never
+stores or checks a password itself.
 
-    authenticate_local(email, password)   -> email + password (demo accounts)
-    authenticate_google(id_token)         -> "Sign in with Google" via Firebase
-    login_user(user)                      -> stores ONLY the user id in the session
-
-Google login flow:
-    1. The login page opens Google's sign-in popup (Firebase JavaScript SDK).
-    2. Firebase gives the browser a signed "ID token" for that Google account.
+    1. The login page signs the user in with the Firebase JavaScript SDK, either
+       with an email and password or with the Google pop-up.
+    2. Firebase gives the browser a signed "ID token" for that account.
     3. The browser POSTs the token (plus our CSRF token) to /firebase-login.
-    4. authenticate_google() asks the Firebase Admin SDK to verify the token's
-       signature, then looks the email up in OUR users table.
-    5. Only accounts the warden has already registered can log in, and the
-       role (student / warden) still comes from our database, never from Google.
+    4. authenticate_firebase() verifies the token with the Firebase Admin SDK and
+       then finds the matching user document in Firestore.
+    5. login_user() stores ONLY the Firestore user id in the session. The role is
+       read from the user document on every request, never from the token.
+
+Only MES college accounts may sign in, and only if the hostel office has already
+registered them in Firestore (the warden adds students; wardens are added when the
+hostel is set up). Signing in with Google does not create an account by itself.
+
+    name@student.mes.ac.in  ->  student
+    name@mes.ac.in          ->  warden
+
+The stored role must match the email domain, so a student address can never hold
+a warden record by mistake.
+
+The same person may sign in with a password on one day and with Google on the
+next. Firebase keeps ONE account per email address and links both sign-in methods
+to it (same uid), and the user document is matched by email, so no second
+HostelHub account is ever created. The uid is stored on the document the first
+time; a different Firebase account claiming the same address is refused.
 """
 
 import hmac
+import json
 import secrets
 from functools import wraps
 
-import json
-
 from flask import (Blueprint, abort, current_app, flash, g, jsonify, redirect, render_template, request,
                    session, url_for)
-from werkzeug.security import check_password_hash
 
-from config import COLLEGE_EMAIL_DOMAINS
-from database import DatabaseError, execute, get_db, query_one
+from config import COLLEGE_EMAIL_DOMAINS, FIREBASE_PROJECT, STAFF_EMAIL_DOMAIN, STUDENT_EMAIL_DOMAIN
+from data import DatabaseError, get_store
 
 auth_bp = Blueprint("auth", __name__)
 
 
 # ------------------------------------------------------------------
-# Authentication functions
+# Firebase Authentication
 # ------------------------------------------------------------------
 
-def authenticate_local(email, password):
-    """Return the user row if the email and password are correct, else None."""
-    user = query_one("SELECT * FROM users WHERE email = ?", (email,))
-    if user is None:
-        return None
-    # The database stores only a hash. check_password_hash() hashes the typed
-    # password the same way and compares the results.
-    if not check_password_hash(user["password_hash"], password):
-        return None
-    return user
-
-
-class GoogleLoginError(Exception):
-    """A Google sign-in was refused. `message` is safe to show; `status` is the HTTP code."""
+class LoginError(Exception):
+    """A sign-in was refused. `message` is safe to show; `status` is the HTTP code."""
 
     def __init__(self, message, status):
         super().__init__(message)
@@ -58,87 +57,144 @@ class GoogleLoginError(Exception):
         self.status = status
 
 
-def authenticate_google(id_token):
-    """Verify a Firebase ID token and return the matching HostelHub user.
+def role_for_email(email):
+    """The role an institutional email address gets. Nobody can choose their own role."""
+    if email.endswith(STUDENT_EMAIL_DOMAIN):
+        return "student"
+    if email.endswith(STAFF_EMAIL_DOMAIN):
+        return "warden"
+    return None
 
-    Raises GoogleLoginError with a friendly message if anything is wrong.
-    """
-    if not id_token:
-        raise GoogleLoginError("Google did not return a sign-in token. Please try again.", 400)
 
-    # Imported here so the rest of the app still works if firebase-admin is missing.
+def verify_id_token(id_token):
+    """Check the token's signature, expiry and project with the Firebase Admin SDK."""
     import firebase_admin
     from firebase_admin import auth as firebase_auth
 
     if not firebase_admin._apps:
-        current_app.logger.error("Google login attempted but the Firebase Admin SDK is not initialised.")
-        raise GoogleLoginError("Google sign-in is not configured on this server.", 503)
-
+        current_app.logger.error("Sign-in attempted but the Firebase Admin SDK is not initialised.")
+        raise LoginError("Sign-in is not configured on this server.", 503)
     try:
-        # Checks Google's signature, the expiry time and that the token was made for OUR Firebase project.
-        claims = firebase_auth.verify_id_token(id_token)
+        return firebase_auth.verify_id_token(id_token)
     except (ValueError, firebase_auth.InvalidIdTokenError, firebase_auth.ExpiredIdTokenError,
             firebase_auth.RevokedIdTokenError, firebase_auth.CertificateFetchError) as error:
-        current_app.logger.warning("Rejected Google ID token: %s", error)
-        raise GoogleLoginError("Your Google sign-in could not be verified. Please try again.", 401)
+        current_app.logger.warning("Rejected Firebase ID token: %s", error)
+        raise LoginError("Your sign-in could not be verified. Please try again.", 401)
 
+
+def authenticate_firebase(id_token):
+    """Verify a Firebase ID token and return the matching HostelHub user document.
+
+    Raises LoginError with a friendly message if anything is wrong.
+    """
+    if not id_token:
+        raise LoginError("No sign-in token was received. Please try again.", 400)
+
+    claims = verify_id_token(id_token)
     email = (claims.get("email") or "").strip().lower()
     uid = claims.get("uid") or claims.get("sub")
-    if not email or not claims.get("email_verified"):
-        raise GoogleLoginError("Your Google account has no verified email address.", 403)
+    provider = (claims.get("firebase") or {}).get("sign_in_provider", "")
+
+    if not email:
+        raise LoginError("This account has no email address.", 403)
+    # A Google account always carries a verified address. An email/password account
+    # is created by the hostel office with the Admin SDK, so its address is trusted
+    # even before the user confirms it.
+    if provider not in ("password", "custom") and not claims.get("email_verified"):
+        raise LoginError("Your Google account has no verified email address.", 403)
     if not email.endswith(COLLEGE_EMAIL_DOMAINS):
-        raise GoogleLoginError("Please sign in with your MES college Google account "
-                               "(@student.mes.ac.in or @mes.ac.in).", 403)
+        raise LoginError("Please sign in with your MES college account "
+                         "(@student.mes.ac.in or @mes.ac.in).", 403)
 
-    # The warden must have registered this email first — Google alone is not enough.
-    user = query_one("SELECT * FROM users WHERE email = ?", (email,))
+    store = get_store()
+    user = store.first("users", email=email)
     if user is None:
-        raise GoogleLoginError(f"{email} is not registered in HostelHub. "
-                               "Please ask the hostel warden to add your account.", 404)
+        raise LoginError(f"{email} is not registered in HostelHub. "
+                         "Please ask the hostel warden to add your account.", 404)
+    if user["role"] != role_for_email(email):
+        current_app.logger.error("User %s has role %r, which does not match the email domain.",
+                                 user["id"], user["role"])
+        raise LoginError("This account is not set up correctly. Please contact the hostel office.", 403)
     if not user["is_active"]:
-        raise GoogleLoginError("This account has been deactivated. Please contact the hostel office.", 403)
+        raise LoginError("This account has been deactivated. Please contact the hostel office.", 403)
 
-    if user["firebase_uid"] and user["firebase_uid"] != uid:
-        # The email is already linked to a different Google account: refuse, don't overwrite.
-        raise GoogleLoginError("This HostelHub account is linked to a different Google account.", 403)
-    if not user["firebase_uid"]:
-        # First Google sign-in: remember which Google account belongs to this user.
+    if user.get("firebase_uid") and user["firebase_uid"] != uid:
+        # The address already belongs to another Firebase account: refuse, don't overwrite.
+        raise LoginError("This HostelHub account is linked to a different sign-in account. "
+                         "Please contact the hostel office.", 403)
+    if not user.get("firebase_uid"):
+        # First sign-in: remember which Firebase account belongs to this user.
         try:
-            execute("UPDATE users SET firebase_uid = ? WHERE id = ?", (uid, user["id"]))
-            get_db().commit()
+            store.update("users", user["id"], {"firebase_uid": uid})
+            store.commit()
+            user["firebase_uid"] = uid
         except DatabaseError:
-            get_db().rollback()
-            raise GoogleLoginError("Could not complete sign-in. Please try again.", 500)
+            store.rollback()
+            raise LoginError("Could not complete sign-in. Please try again.", 500)
     return user
 
 
 def init_firebase(app):
-    """Start the Firebase Admin SDK once, when the app starts (called from app.py).
+    """Start the Firebase Admin SDK (Authentication and Firestore).
 
-    Returns True when Google sign-in can work. Problems are logged, never shown to users,
-    and password login keeps working either way.
+    HostelHub cannot work without it, so a failure here is fatal: there is no
+    local database to fall back to.
     """
     import firebase_admin
     from firebase_admin import credentials
 
     if firebase_admin._apps:
         return True
+
     raw = app.config.get("FIREBASE_SERVICE_ACCOUNT", "")
-    if not raw:
-        app.logger.info("FIREBASE_SERVICE_ACCOUNT is not set: Google sign-in is disabled.")
-        return False
+    path = app.config.get("FIREBASE_CREDENTIALS_FILE", "")
     try:
-        firebase_admin.initialize_app(credentials.Certificate(json.loads(raw)))
+        if raw:
+            certificate = credentials.Certificate(json.loads(raw))
+        elif path:
+            certificate = credentials.Certificate(path)
+        else:
+            raise ValueError("no service account provided")
+    except (ValueError, KeyError, OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            "HostelHub could not start Firebase. Set FIREBASE_SERVICE_ACCOUNT (the service-account "
+            "JSON) or FIREBASE_CREDENTIALS_FILE (its path). "
+            f"Reason: {type(error).__name__}: {error}"
+        ) from error
+
+    # The login page (web config) and the server (service account) must use the SAME
+    # Firebase project, otherwise every sign-in token is rejected and the data would
+    # be read from a different project than the one people sign in to.
+    try:
+        web_project = json.loads(app.config.get("FIREBASE_CLIENT_CONFIG") or "{}").get("projectId")
+    except ValueError:
+        web_project = None
+    if web_project and certificate.project_id != web_project:
+        raise RuntimeError(
+            f"HostelHub configuration error: the service account belongs to Firebase project "
+            f"'{certificate.project_id}' but the web config (FIREBASE_CLIENT_CONFIG) is for "
+            f"'{web_project}'. Both must come from the same project."
+        )
+
+    if certificate.project_id != FIREBASE_PROJECT["projectId"]:
+        # Allowed (for example for a test project), but never by accident.
+        app.logger.warning("HostelHub is using Firebase project '%s', not the HostelHub project '%s'. "
+                           "Check FIREBASE_SERVICE_ACCOUNT and FIREBASE_CLIENT_CONFIG.",
+                           certificate.project_id, FIREBASE_PROJECT["projectId"])
+
+    try:
+        firebase_admin.initialize_app(certificate)
         return True
-    except (ValueError, KeyError) as error:
-        # Usually a broken copy-paste of the JSON (missing quote or line break).
-        app.logger.error("Could not start Firebase Admin SDK (check FIREBASE_SERVICE_ACCOUNT): %s",
-                         type(error).__name__)
-        return False
+    except ValueError as error:
+        raise RuntimeError(
+            "HostelHub could not start Firebase. Set FIREBASE_SERVICE_ACCOUNT (the service-account "
+            "JSON) or FIREBASE_CREDENTIALS_FILE (its path). "
+            f"Reason: {type(error).__name__}: {error}"
+        ) from error
 
 
 def firebase_client_config():
-    """The PUBLIC Firebase web config for the login page, or None if Google login is not set up.
+    """The PUBLIC Firebase web config for the login page, or None if it is unusable.
 
     (This config is designed to be public; the secret service account never leaves the server.)
     """
@@ -146,7 +202,7 @@ def firebase_client_config():
 
     raw = current_app.config.get("FIREBASE_CLIENT_CONFIG", "")
     if not raw or not firebase_admin._apps:
-        return None      # no button if the server could not verify Google tokens anyway
+        return None      # no sign-in form if the server could not verify tokens anyway
     try:
         config = json.loads(raw)
     except ValueError:
@@ -159,8 +215,8 @@ def firebase_client_config():
 def login_user(user):
     """Start a session for this user.
 
-    We store ONLY the user id. The role is always read again from the
-    database, so nobody can become a warden by editing the browser.
+    We store ONLY the user id. The role is always read again from Firestore, so
+    nobody can become a warden by editing the browser.
     """
     session.clear()
     session["user_id"] = user["id"]
@@ -181,12 +237,7 @@ def load_logged_in_user():
     if user_id is None:
         return
 
-    user = query_one(
-        """SELECT id, name, email, role, student_id, phone, department, year_of_study,
-                  is_active, created_at
-           FROM users WHERE id = ?""",
-        (user_id,),
-    )
+    user = get_store().get("users", user_id)
     # A deleted or deactivated account is logged out immediately.
     if user is None or not user["is_active"]:
         session.clear()
@@ -276,33 +327,13 @@ def warden_required(view):
 # Routes
 # ------------------------------------------------------------------
 
-@auth_bp.route("/login", methods=["GET", "POST"])
+@auth_bp.route("/login")
 def login():
+    """The login page. Signing in happens in the browser with Firebase, then the
+    ID token is posted to /firebase-login below."""
     if g.user is not None:
         return redirect(home_url_for(g.user["role"]))
-
-    email = ""
-    if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
-
-        if not email or not password:
-            flash("Please enter both email and password.", "danger")
-        else:
-            user = authenticate_local(email, password)
-            if user is None:
-                # Same message for "wrong email" and "wrong password" so
-                # attackers cannot find out which emails exist.
-                flash("Invalid email or password.", "danger")
-            elif not user["is_active"]:
-                flash("This account has been deactivated. Please contact the hostel office.", "danger")
-            else:
-                login_user(user)
-                first_name = user["name"].replace("Dr. ", "").split()[0]
-                flash(f"Welcome back, {first_name}!", "success")
-                return redirect(home_url_for(user["role"]))
-
-    return render_template("auth/login.html", email=email, firebase_config=firebase_client_config())
+    return render_template("auth/login.html", firebase_config=firebase_client_config())
 
 
 @auth_bp.route("/logout", methods=["POST"])
@@ -312,20 +343,16 @@ def logout():
     return redirect(url_for("auth.login"))
 
 
-# ------------------------------------------------------------------
-# Google sign-in (Firebase)
-# ------------------------------------------------------------------
-
 @auth_bp.route("/firebase-login", methods=["POST"])
 def firebase_login():
-    """Called by the login page's JavaScript after the Google popup.
+    """Called by the login page after Firebase signed the user in.
 
-    Like every POST, it must carry our CSRF token (checked in check_csrf_token()).
+    Like every POST it must carry our CSRF token (checked in check_csrf_token()).
     It answers with JSON because JavaScript, not a normal form, reads the reply.
     """
     try:
-        user = authenticate_google(request.form.get("idToken", ""))
-    except GoogleLoginError as error:
+        user = authenticate_firebase(request.form.get("idToken", ""))
+    except LoginError as error:
         return jsonify({"error": error.message}), error.status
 
     login_user(user)

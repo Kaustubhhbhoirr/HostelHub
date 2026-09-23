@@ -12,7 +12,9 @@ Students can never move themselves. They create a request:
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 
 from config import ROOM_CHANGE_REASONS, ROOM_CHANGE_STATUSES
-from database import DatabaseError, execute, get_db, now_str, query_all, query_one
+from data import DatabaseError, get_store, now_str
+from data.queries import (free_beds, request_status_counts, request_with_details, student_requests,
+                          warden_requests)
 from helpers import (InvalidAllocationError, bed_label, create_notification, get_active_allocation,
                      get_bed, move_student, notify_wardens, release_reserved_bed)
 from routes.auth import student_required, warden_required
@@ -22,12 +24,7 @@ requests_bp = Blueprint("requests", __name__)
 
 def get_available_beds():
     """Every free bed in an active room, for the bed dropdowns."""
-    return query_all(
-        """SELECT beds.id, beds.bed_number, rooms.block, rooms.floor, rooms.room_number, rooms.capacity
-           FROM beds JOIN rooms ON rooms.id = beds.room_id
-           WHERE beds.status = 'available' AND rooms.status = 'active'
-           ORDER BY rooms.block, rooms.floor, rooms.room_number, beds.bed_number"""
-    )
+    return free_beds()
 
 
 def group_beds_by_block(beds):
@@ -39,28 +36,8 @@ def group_beds_by_block(beds):
 
 
 def get_request(request_id):
-    """One request with the student and both bed labels (LEFT JOIN because beds may be NULL)."""
-    return query_one(
-        """SELECT rcr.*, users.name AS student_name, users.student_id AS roll_number,
-                  users.department, users.year_of_study,
-                  cur_bed.bed_number AS current_bed_number, cur_room.block AS current_block,
-                  cur_room.room_number AS current_room_number, cur_room.floor AS current_floor,
-                  req_bed.bed_number AS requested_bed_number, req_bed.status AS requested_bed_status,
-                  req_room.block AS requested_block, req_room.room_number AS requested_room_number,
-                  req_room.floor AS requested_floor,
-                  new_bed.bed_number AS assigned_bed_number, new_room.block AS assigned_block,
-                  new_room.room_number AS assigned_room_number
-           FROM room_change_requests AS rcr
-           JOIN users ON users.id = rcr.student_id
-           JOIN beds  AS cur_bed  ON cur_bed.id  = rcr.current_bed_id
-           JOIN rooms AS cur_room ON cur_room.id = cur_bed.room_id
-           LEFT JOIN beds  AS req_bed  ON req_bed.id  = rcr.requested_bed_id
-           LEFT JOIN rooms AS req_room ON req_room.id = req_bed.room_id
-           LEFT JOIN beds  AS new_bed  ON new_bed.id  = rcr.assigned_bed_id
-           LEFT JOIN rooms AS new_room ON new_room.id = new_bed.room_id
-           WHERE rcr.id = ?""",
-        (request_id,),
-    )
+    """One request with the student and both bed labels."""
+    return request_with_details(request_id)
 
 
 def request_code(request_id):
@@ -74,10 +51,8 @@ def request_code(request_id):
 @requests_bp.route("/student/room-requests")
 @student_required
 def student_list():
-    request_ids = query_all(
-        "SELECT id FROM room_change_requests WHERE student_id = ? ORDER BY created_at DESC", (g.user["id"],))
-    # Reuse get_request() so every card has the full bed/room labels.
-    room_requests = [get_request(row["id"]) for row in request_ids]
+    # Every card shows the full bed and room labels.
+    room_requests = student_requests(g.user["id"])
     has_pending = any(r["status"] == "Pending" for r in room_requests)
     return render_template("requests/student_list.html", room_requests=room_requests, has_pending=has_pending,
                            allocation=get_active_allocation(g.user["id"]))
@@ -91,8 +66,7 @@ def student_new():
         flash("You need a room allocation before you can request a room change.", "warning")
         return redirect(url_for("requests.student_list"))
 
-    pending = query_one("SELECT id FROM room_change_requests WHERE student_id = ? AND status = 'Pending'",
-                        (g.user["id"],))
+    pending = get_store().first("room_change_requests", student_id=g.user["id"], status="Pending")
     if pending:
         flash("You already have a pending room change request. Wait for the warden's decision or cancel it.",
               "warning")
@@ -121,29 +95,29 @@ def student_new():
             for message in errors:
                 flash(message, "danger")
         else:
-            db = get_db()
+            store = get_store()
             try:
                 timestamp = now_str()
-                request_id = execute(
-                    """INSERT INTO room_change_requests (student_id, current_bed_id, requested_bed_id, reason,
-                                                         details, status, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?)""",
-                    (g.user["id"], allocation["bed_id"], requested_bed_id, form["reason"], form["details"],
-                     timestamp, timestamp),
-                )
+                request_id = store.insert("room_change_requests", {
+                    "student_id": g.user["id"], "current_bed_id": allocation["bed_id"],
+                    "requested_bed_id": requested_bed_id, "assigned_bed_id": None,
+                    "reason": form["reason"], "details": form["details"], "status": "Pending",
+                    "warden_remarks": None, "created_at": timestamp, "updated_at": timestamp,
+                })
                 if requested_bed_id is not None:
                     # Hold the bed so nobody else is allocated to it while the warden decides.
-                    execute("UPDATE beds SET status = 'reserved' WHERE id = ? AND status = 'available'",
-                            (requested_bed_id,))
+                    held_bed = store.get("beds", requested_bed_id)
+                    if held_bed and held_bed["status"] == "available":
+                        store.update("beds", requested_bed_id, {"status": "reserved"})
                 notify_wardens("New room change request",
                                f"{g.user['name']} ({allocation['block']}-{allocation['room_number']}) "
                                f"requested a room change: {form['reason']}.",
                                "room_request", url_for("requests.warden_detail", request_id=request_id))
-                db.commit()
+                store.commit()
                 flash("Room change request submitted.", "success")
                 return redirect(url_for("requests.student_list"))
             except DatabaseError:
-                db.rollback()
+                store.rollback()
                 flash("Your request could not be saved. Please try again.", "danger")
 
     available_beds = [bed for bed in get_available_beds() if bed["id"] != allocation["bed_id"]]
@@ -154,19 +128,17 @@ def student_new():
 @requests_bp.route("/student/room-requests/<int:request_id>/cancel", methods=["POST"])
 @student_required
 def student_cancel(request_id):
-    room_request = query_one("SELECT * FROM room_change_requests WHERE id = ? AND student_id = ?",
-                             (request_id, g.user["id"]))
-    if room_request is None:
+    store = get_store()
+    room_request = store.get("room_change_requests", request_id)
+    if room_request is None or room_request["student_id"] != g.user["id"]:
         abort(404)
     if room_request["status"] != "Pending":
         flash("Only pending requests can be cancelled.", "warning")
         return redirect(url_for("requests.student_list"))
 
-    db = get_db()
     release_reserved_bed(room_request["requested_bed_id"])
-    execute("UPDATE room_change_requests SET status = 'Cancelled', updated_at = ? WHERE id = ?",
-            (now_str(), request_id))
-    db.commit()
+    store.update("room_change_requests", request_id, {"status": "Cancelled", "updated_at": now_str()})
+    store.commit()
     flash("Room change request cancelled.", "success")
     return redirect(url_for("requests.student_list"))
 
@@ -182,16 +154,8 @@ def warden_list():
     if status not in ROOM_CHANGE_STATUSES and status != "all":
         status = "Pending"
 
-    sql = "SELECT id FROM room_change_requests"
-    params = ()
-    if status != "all":
-        sql += " WHERE status = ?"
-        params = (status,)
-    rows = query_all(sql + " ORDER BY created_at DESC", params)
-    room_requests = [get_request(row["id"]) for row in rows]
-
-    count_rows = query_all("SELECT status, COUNT(*) AS total FROM room_change_requests GROUP BY status")
-    counts = {row["status"]: row["total"] for row in count_rows}
+    room_requests = warden_requests(status)
+    counts = request_status_counts()
     counts["all"] = sum(counts.values())
     return render_template("requests/warden_list.html", room_requests=room_requests, status=status,
                            counts=counts, statuses=ROOM_CHANGE_STATUSES)
@@ -229,7 +193,7 @@ def warden_decide(request_id):
     action = request.form.get("action")
     remarks = request.form.get("remarks", "").strip()
     code = request_code(request_id)
-    db = get_db()
+    store = get_store()
 
     if action == "reject":
         if not remarks:
@@ -237,15 +201,15 @@ def warden_decide(request_id):
             return redirect(detail_url)
         try:
             release_reserved_bed(room_request["requested_bed_id"])
-            execute("UPDATE room_change_requests SET status = 'Rejected', warden_remarks = ?, updated_at = ? WHERE id = ?",
-                    (remarks, now_str(), request_id))
+            store.update("room_change_requests", request_id,
+                         {"status": "Rejected", "warden_remarks": remarks, "updated_at": now_str()})
             create_notification(room_request["student_id"], "Room change request rejected",
                                 f"Your request {code} was rejected. Remarks: {remarks}",
                                 "room_request", url_for("requests.student_list"))
-            db.commit()
+            store.commit()
             flash("Room change request rejected.", "success")
         except DatabaseError:
-            db.rollback()
+            store.rollback()
             flash("The request could not be updated. Please try again.", "danger")
         return redirect(detail_url)
 
@@ -267,23 +231,21 @@ def warden_decide(request_id):
         # move_student(): old allocation ended, old bed available, new bed occupied.
         new_bed = move_student(room_request["student_id"], new_bed_id, allow_reserved=uses_reserved_bed)
 
-        execute(
-            """UPDATE room_change_requests
-               SET status = 'Approved', assigned_bed_id = ?, warden_remarks = ?, updated_at = ?
-               WHERE id = ?""",
-            (new_bed_id, remarks or None, now_str(), request_id),
-        )
+        store.update("room_change_requests", request_id, {
+            "status": "Approved", "assigned_bed_id": new_bed_id,
+            "warden_remarks": remarks or None, "updated_at": now_str(),
+        })
         message = f"You have been moved to {bed_label(new_bed)}."
         if remarks:
             message += f" Remarks: {remarks}"
         create_notification(room_request["student_id"], "Room change approved", message,
                             "room_request", url_for("student.my_room"))
-        db.commit()   # all changes above are saved together
+        store.commit()   # all changes above are saved together
         flash(f"Room change approved. {room_request['student_name']} moved to {bed_label(new_bed)}.", "success")
     except InvalidAllocationError as error:
-        db.rollback()  # undo everything, including the released reservation
+        store.rollback()  # undo everything, including the released reservation
         flash(str(error), "danger")
     except DatabaseError:
-        db.rollback()
+        store.rollback()
         flash("The room change could not be completed. No changes were saved.", "danger")
     return redirect(detail_url)

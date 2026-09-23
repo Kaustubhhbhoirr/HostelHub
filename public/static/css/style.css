@@ -275,11 +275,6 @@ a.stat-card:hover { transform: translateY(-2px); box-shadow: var(--hh-shadow-lg)
 .hero-feature i { color: #a5b4fc; }
 .login-panel { display: flex; align-items: center; justify-content: center; padding: 2.5rem 1.5rem; }
 .login-box { width: 100%; max-width: 400px; }
-.demo-accounts { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
-.demo-account { text-align: left; border: 1px solid var(--hh-border); border-radius: 12px; padding: .7rem .8rem; background: #fff; transition: all .15s; }
-.demo-account:hover { border-color: #a5b4fc; background: var(--hh-primary-soft); }
-.demo-account .role { font-weight: 700; font-size: .85rem; display: flex; align-items: center; gap: .4rem; }
-.demo-account .email { font-size: .72rem; color: var(--hh-muted); }
 .btn-google { display: flex; align-items: center; justify-content: center; gap: .6rem; background: #fff; border: 1px solid #dadce0; color: #1f1f1f; }
 .btn-google:hover { background: #f8fafc; border-color: #c4c7cc; color: #1f1f1f; }
 .btn-google:disabled { opacity: .75; }
@@ -430,7 +425,6 @@ button.bed:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 2px; }
   .page-title { font-size: 1.3rem; }
   .notif-dropdown { width: calc(100vw - 2rem); }
   .room-grid { grid-template-columns: 1fr; }
-  .demo-accounts { grid-template-columns: 1fr; }
   .filter-bar .form-select { flex: 1 1 140px; width: auto !important; }
   .page-actions { width: 100%; }
   .page-actions > .btn, .page-actions > form { flex: 1 1 auto; }

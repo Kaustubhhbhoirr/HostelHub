@@ -10,7 +10,9 @@ Status flow:  Draft -> Sent to College -> Under Review -> Approved / Rejected ->
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 
 from config import COLLEGE_REQUEST_STATUSES, COLLEGE_REQUEST_TYPES, COMPLAINT_PRIORITIES
-from database import DatabaseError, execute, get_db, now_str, query_all, query_one
+from data import DatabaseError, get_store, now_str
+from data.queries import (college_request_list, college_request_with_details, college_status_counts,
+                          complaint_with_details)
 from helpers import create_notification
 from routes.auth import warden_required
 
@@ -18,15 +20,7 @@ college_bp = Blueprint("college", __name__, url_prefix="/warden/college-requests
 
 
 def get_college_request_or_404(request_id):
-    row = query_one(
-        """SELECT cmr.*, users.name AS warden_name,
-                  complaints.category AS complaint_category, complaints.student_id AS complaint_student_id
-           FROM college_maintenance_requests AS cmr
-           JOIN users ON users.id = cmr.warden_id
-           LEFT JOIN complaints ON complaints.id = cmr.complaint_id
-           WHERE cmr.id = ?""",
-        (request_id,),
-    )
+    row = college_request_with_details(request_id)
     if row is None:
         abort(404)
     return row
@@ -34,7 +28,7 @@ def get_college_request_or_404(request_id):
 
 def notify_student_about_escalation(complaint_id):
     """Tell the student that their complaint was forwarded to the college."""
-    complaint = query_one("SELECT id, student_id, category FROM complaints WHERE id = ?", (complaint_id,))
+    complaint = get_store().get("complaints", complaint_id)
     if complaint:
         create_notification(
             complaint["student_id"], "Complaint escalated to college",
@@ -48,15 +42,10 @@ def notify_student_about_escalation(complaint_id):
 @warden_required
 def request_list():
     status = request.args.get("status", "")
-    sql = """SELECT cmr.* FROM college_maintenance_requests AS cmr"""
-    params = ()
-    if status in COLLEGE_REQUEST_STATUSES:
-        sql += " WHERE cmr.status = ?"
-        params = (status,)
-    college_requests = query_all(sql + " ORDER BY cmr.updated_at DESC", params)
-
-    rows = query_all("SELECT status, COUNT(*) AS total FROM college_maintenance_requests GROUP BY status")
-    counts = {row["status"]: row["total"] for row in rows}
+    if status not in COLLEGE_REQUEST_STATUSES:
+        status = ""
+    college_requests = college_request_list(status)
+    counts = college_status_counts()
     return render_template("college/list.html", college_requests=college_requests, status=status,
                            counts=counts, statuses=COLLEGE_REQUEST_STATUSES)
 
@@ -103,11 +92,7 @@ def request_new(request_id=None):
         # "Escalate" button on a complaint opens this form with ?complaint_id=...
         complaint_id = request.args.get("complaint_id", type=int)
         if complaint_id:
-            complaint = query_one(
-                """SELECT complaints.*, rooms.block, rooms.room_number FROM complaints
-                   JOIN rooms ON rooms.id = complaints.room_id WHERE complaints.id = ?""",
-                (complaint_id,),
-            )
+            complaint = complaint_with_details(complaint_id)
             if complaint:
                 values.update({
                     "complaint_id": complaint["id"],
@@ -127,37 +112,34 @@ def request_new(request_id=None):
             for message in errors:
                 flash(message, "danger")
         else:
-            db = get_db()
+            store = get_store()
             status = "Sent to College" if send_now else "Draft"
             timestamp = now_str()
             try:
                 if existing is None:
-                    request_id = execute(
-                        """INSERT INTO college_maintenance_requests
-                           (warden_id, complaint_id, request_type, asset, location, quantity, description,
-                            priority, status, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (g.user["id"], complaint_id, data["request_type"], data["asset"], data["location"],
-                         int(data["quantity"]), data["description"], data["priority"], status,
-                         timestamp, timestamp),
-                    )
+                    request_id = store.insert("college_maintenance_requests", {
+                        "warden_id": g.user["id"], "complaint_id": complaint_id,
+                        "request_type": data["request_type"], "asset": data["asset"],
+                        "location": data["location"], "quantity": int(data["quantity"]),
+                        "description": data["description"], "priority": data["priority"],
+                        "status": status, "college_remarks": None,
+                        "created_at": timestamp, "updated_at": timestamp,
+                    })
                 else:
                     complaint_id = existing["complaint_id"]
-                    execute(
-                        """UPDATE college_maintenance_requests
-                           SET request_type = ?, asset = ?, location = ?, quantity = ?, description = ?,
-                               priority = ?, status = ?, updated_at = ?
-                           WHERE id = ?""",
-                        (data["request_type"], data["asset"], data["location"], int(data["quantity"]),
-                         data["description"], data["priority"], status, timestamp, request_id),
-                    )
+                    store.update("college_maintenance_requests", request_id, {
+                        "request_type": data["request_type"], "asset": data["asset"],
+                        "location": data["location"], "quantity": int(data["quantity"]),
+                        "description": data["description"], "priority": data["priority"],
+                        "status": status, "updated_at": timestamp,
+                    })
                 if send_now and complaint_id:
                     notify_student_about_escalation(complaint_id)
-                db.commit()
+                store.commit()
                 flash("Request sent to college." if send_now else "Request saved as draft.", "success")
                 return redirect(url_for("college.request_detail", request_id=request_id))
             except DatabaseError:
-                db.rollback()
+                store.rollback()
                 flash("The request could not be saved. Please try again.", "danger")
 
     return render_template("college/form.html", values=values, existing=existing,
@@ -189,19 +171,18 @@ def request_status(request_id):
         flash("College remarks must be under 1000 characters.", "danger")
         return redirect(url_for("college.request_detail", request_id=request_id))
 
-    db = get_db()
+    store = get_store()
     try:
-        execute(
-            "UPDATE college_maintenance_requests SET status = ?, college_remarks = ?, updated_at = ? WHERE id = ?",
-            (new_status, college_remarks or None, now_str(), request_id),
-        )
+        store.update("college_maintenance_requests", request_id, {
+            "status": new_status, "college_remarks": college_remarks or None, "updated_at": now_str(),
+        })
         # First time a draft is sent: let the student (if linked to a complaint) know.
         if college_request["status"] == "Draft" and new_status == "Sent to College" and college_request["complaint_id"]:
             notify_student_about_escalation(college_request["complaint_id"])
-        db.commit()
+        store.commit()
         flash(f"Request status updated to {new_status}.", "success")
     except DatabaseError:
-        db.rollback()
+        store.rollback()
         flash("The status could not be updated. Please try again.", "danger")
     return redirect(url_for("college.request_detail", request_id=request_id))
 
@@ -213,7 +194,8 @@ def request_delete(request_id):
     if college_request["status"] != "Draft":
         flash("Only drafts can be deleted. Sent requests are kept as an official record.", "warning")
         return redirect(url_for("college.request_detail", request_id=request_id))
-    execute("DELETE FROM college_maintenance_requests WHERE id = ?", (request_id,))
-    get_db().commit()
+    store = get_store()
+    store.delete("college_maintenance_requests", request_id)
+    store.commit()
     flash("Draft request deleted.", "success")
     return redirect(url_for("college.request_list"))

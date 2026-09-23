@@ -11,8 +11,9 @@ from datetime import datetime
 from flask import Blueprint, g, render_template
 
 from config import OPEN_COMPLAINT_STATUSES
-from database import query_all, query_one
-from helpers import get_active_allocation
+from data import get_store
+from data.queries import (get_active_allocation, notifications_for, room_beds_with_occupants,
+                          roommates, student_complaints)
 from routes.auth import student_required
 
 student_bp = Blueprint("student", __name__, url_prefix="/student")
@@ -28,69 +29,21 @@ def greeting_for_now():
     return "Good evening"
 
 
-def get_room_beds(room_id):
-    """All beds of one room, with the occupant's name if the bed is taken.
-
-    LEFT JOIN keeps beds that have no active allocation (their name is NULL).
-    """
-    return query_all(
-        """SELECT beds.id, beds.bed_number, beds.status,
-                  users.id AS occupant_id, users.name AS occupant_name
-           FROM beds
-           LEFT JOIN allocations ON allocations.bed_id = beds.id AND allocations.status = 'active'
-           LEFT JOIN users ON users.id = allocations.student_id
-           WHERE beds.room_id = ?
-           ORDER BY beds.bed_number""",
-        (room_id,),
-    )
-
-
-def get_roommates(room_id, student_id):
-    """Other students in the same room.
-
-    Only non-private details are selected (no phone number or email).
-    """
-    return query_all(
-        """SELECT users.name, users.department, users.year_of_study, beds.bed_number,
-                  allocations.allocated_at
-           FROM allocations
-           JOIN users ON users.id = allocations.student_id
-           JOIN beds  ON beds.id  = allocations.bed_id
-           WHERE beds.room_id = ? AND allocations.status = 'active' AND users.id != ?
-           ORDER BY beds.bed_number""",
-        (room_id, student_id),
-    )
-
-
 @student_bp.route("/dashboard")
 @student_required
 def dashboard():
     student_id = g.user["id"]
     allocation = get_active_allocation(student_id)
 
-    placeholders = ", ".join("?" for _ in OPEN_COMPLAINT_STATUSES)   # "?, ?, ?"
-    active_complaints = query_one(
-        f"SELECT COUNT(*) AS total FROM complaints WHERE student_id = ? AND status IN ({placeholders})",
-        (student_id, *OPEN_COMPLAINT_STATUSES),
-    )["total"]
-    pending_requests = query_one(
-        "SELECT COUNT(*) AS total FROM room_change_requests WHERE student_id = ? AND status = 'Pending'",
-        (student_id,),
-    )["total"]
-    resolved_complaints = query_one(
-        "SELECT COUNT(*) AS total FROM complaints WHERE student_id = ? AND status = 'Resolved'",
-        (student_id,),
-    )["total"]
+    store = get_store()
+    complaints = store.find("complaints", student_id=student_id)
+    active_complaints = sum(1 for row in complaints if row["status"] in OPEN_COMPLAINT_STATUSES)
+    resolved_complaints = sum(1 for row in complaints if row["status"] == "Resolved")
+    pending_requests = store.count("room_change_requests", student_id=student_id, status="Pending")
 
-    recent_complaints = query_all(
-        "SELECT * FROM complaints WHERE student_id = ? ORDER BY created_at DESC LIMIT 4",
-        (student_id,),
-    )
-    recent_notifications = query_all(
-        "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 5",
-        (student_id,),
-    )
-    roommate_count = len(get_roommates(allocation["room_id"], student_id)) if allocation else 0
+    recent_complaints = student_complaints(student_id)[:4]
+    recent_notifications = notifications_for(student_id, limit=5)
+    roommate_count = len(roommates(allocation["room_id"], student_id)) if allocation else 0
 
     # A dictionary groups the numbers shown in the stat cards.
     stats = {
@@ -113,10 +66,10 @@ def dashboard():
 @student_required
 def my_room():
     allocation = get_active_allocation(g.user["id"])
-    beds, roommates = [], []
+    beds, room_mates = [], []
     if allocation:
-        beds = get_room_beds(allocation["room_id"])
-        roommates = get_roommates(allocation["room_id"], g.user["id"])
+        beds = room_beds_with_occupants(allocation["room_id"])
+        room_mates = roommates(allocation["room_id"], g.user["id"])
 
     # Count beds per status with a dictionary, e.g. {"occupied": 3, "available": 1}.
     bed_counts = {}
@@ -124,4 +77,4 @@ def my_room():
         bed_counts[bed["status"]] = bed_counts.get(bed["status"], 0) + 1
 
     return render_template("student/room.html", allocation=allocation, beds=beds,
-                           roommates=roommates, bed_counts=bed_counts)
+                           roommates=room_mates, bed_counts=bed_counts)

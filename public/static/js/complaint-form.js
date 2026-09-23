@@ -57,30 +57,33 @@ document.addEventListener("DOMContentLoaded", function () {
     reader.readAsDataURL(file);
   }
 
-  fileInput.addEventListener("change", function () {
-    handleFile(fileInput.files[0]);
-  });
-  document.getElementById("removeImage").addEventListener("click", clearImage);
-
-  // Drag and drop onto the upload zone.
-  ["dragenter", "dragover"].forEach(function (name) {
-    uploadZone.addEventListener(name, function (event) {
-      event.preventDefault();
-      uploadZone.classList.add("dragover");
-    });
-  });
-  ["dragleave", "drop"].forEach(function (name) {
-    uploadZone.addEventListener(name, function () {
-      uploadZone.classList.remove("dragover");
-    });
-  });
-  uploadZone.addEventListener("drop", function (event) {
-    event.preventDefault();
-    if (event.dataTransfer.files.length) {
-      fileInput.files = event.dataTransfer.files; // put the dropped file into the real input
+  // The photo section is only on the page when this server stores photos.
+  if (fileInput) {
+    fileInput.addEventListener("change", function () {
       handleFile(fileInput.files[0]);
-    }
-  });
+    });
+    document.getElementById("removeImage").addEventListener("click", clearImage);
+
+    // Drag and drop onto the upload zone.
+    ["dragenter", "dragover"].forEach(function (name) {
+      uploadZone.addEventListener(name, function (event) {
+        event.preventDefault();
+        uploadZone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (name) {
+      uploadZone.addEventListener(name, function () {
+        uploadZone.classList.remove("dragover");
+      });
+    });
+    uploadZone.addEventListener("drop", function (event) {
+      event.preventDefault();
+      if (event.dataTransfer.files.length) {
+        fileInput.files = event.dataTransfer.files; // put the dropped file into the real input
+        handleFile(fileInput.files[0]);
+      }
+    });
+  }
 
   // Live character counter.
   description.addEventListener("input", function () {

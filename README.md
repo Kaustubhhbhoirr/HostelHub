@@ -6,14 +6,22 @@ A Flask web portal where students check their room, report maintenance problems 
 
 Academic project by a team of four second-year Computer Engineering students.
 
-HostelHub runs in **two modes** with the same code:
+HostelHub has **one backend: Firebase** (project `hostelhub-83310`). The app on a laptop and the app on Vercel use the **same** Firebase project, so the data is live and shared: a complaint a student submits on localhost is immediately visible to the warden on the deployed site, and the other way round.
 
-| | Local development | Deployment (Vercel) |
+| | On a laptop | Deployed |
 |---|---|---|
-| Web server | `python app.py` on your computer | Vercel Functions (zero-config Flask) |
-| Database | SQLite file `database/hostelhub.db` | Hosted PostgreSQL (e.g. Supabase) |
-| Complaint photos | `uploads/complaints/` folder | Private Supabase Storage bucket |
-| Setup needed | none (no environment variables) | environment variables, see [docs/deployment.md](docs/deployment.md) |
+| Web server | `python app.py` | Vercel (zero-config Flask) |
+| Sign-in | Firebase Authentication (email/password + Google) | same project |
+| Data | Cloud Firestore | same project |
+| Complaint photos (optional) | `uploads/complaints/` on the laptop | switched off |
+
+There is no local database and no fallback: without Firebase credentials the app refuses to start.
+
+**Complaint photos are optional.** Firebase Cloud Storage needs the paid Blaze plan, so it is not used.
+On a laptop, photos are kept in the git-ignored `uploads/complaints/` folder; on Vercel, photo uploads
+are switched off (its disk is temporary) and complaints are submitted without one. Firestore stores only
+the photo's generated file name, so a cloud image service can be added later in `storage.py` without
+changing the complaint data.
 
 ---
 
@@ -72,63 +80,72 @@ There is no college-admin login yet. The warden records the college's replies.
 | 🔵 Blue | `maintenance` | Under repair |
 | ⚪ Grey | `unavailable` | Closed / room inactive |
 
+
 ## 5. Technology stack
 
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.14 (3.12+ works) and Flask (routes, sessions, Jinja2 templates) |
-| Database | Plain SQL; SQLite locally, PostgreSQL in deployment (`psycopg` driver). No ORM |
-| Photo storage | Local folder locally; private Supabase Storage bucket in deployment (Python's built-in `urllib`) |
+| Sign-in | Firebase Authentication: email/password and Google |
+| Database | Cloud Firestore, through a small store interface (`data/store.py`). No ORM |
+| Photo storage | Optional: local `uploads/complaints/` folder, or switched off (`storage.py`); served only through a checked route |
+| Firebase access | Firebase Admin SDK for Python (`firebase-admin`) on the server; Firebase JS SDK on the login page |
 | Frontend | HTML, Bootstrap 5.3, Bootstrap Icons, custom CSS, vanilla JavaScript |
-| Security | Werkzeug password hashing, session login, server-side role checks, CSRF tokens, parameterised SQL |
+| Security | Server-side role checks, session login, CSRF tokens, Firestore preconditions and guard documents |
 | Hosting | Vercel (zero-configuration Flask) |
-| Testing | Python `unittest` and Flask's test client |
+| Testing | Python `unittest`, Flask's test client and in-memory Firebase stand-ins |
 
-`requirements.txt` contains only **Flask** and **psycopg** (the PostgreSQL driver, which is unused locally). Bootstrap, the icons and the font load from CDNs.
+`requirements.txt` contains **Flask**, **firebase-admin** and **python-dotenv**. Bootstrap, the icon font and the web font are stored in `public/static/vendor/`.
 
 ## 6. Architecture overview
 
 ```
-LOCAL                                     DEPLOYMENT
-Browser                                   Browser
-  │                                         │  HTTPS
-Flask (python app.py)                     Vercel ── CDN serves public/static/*
-  │                                         │
-  ├── SQLite  database/hostelhub.db         Flask (Vercel Function)
-  └── uploads/complaints/                   ├── hosted PostgreSQL   (DATABASE_URL)
-                                            └── private Supabase bucket (SUPABASE_URL)
+LOCALHOST                                  DEPLOYED
+Browser                                    Browser
+  │                                          │  HTTPS
+Flask (python app.py)                      Vercel ── CDN serves public/static/*
+  │                                          │
+  │                                        Flask (Vercel Function)
+  │                                          │
+  └──────────────┬───────────────────────────┘
+                 ▼
+       Firebase project hostelhub-83310
+       ├── Firebase Authentication  (who is signing in)
+       └── Cloud Firestore          (all hostel data)
+
+Complaint photos (optional): uploads/complaints/ on the laptop; switched off on Vercel
 ```
 
-Every request follows the same path in both modes:
+Every request follows the same path:
 
 ```
 form / button (+ CSRF token) → Flask route (login + ROLE check on the server)
-  → Python rules (helpers.py) → parameterised SQL (database.py)
-  → commit() or rollback() → flash() + redirect / render_template → page
+  → Python rules (helpers.py) → store (data/firestore_store.py) collects the changes
+  → commit(): one atomic Firestore batch, or rollback() → flash() + redirect / render_template
 ```
 
-**Why storage differs:** on Vercel, each function has a *temporary* file system, so a SQLite file or an uploaded photo saved there would disappear. Deployment therefore keeps data in a database server and photos in object storage. Details: [docs/architecture.md](docs/architecture.md).
+Details: [docs/architecture.md](docs/architecture.md).
 
 ## 7. Project structure
 
 ```
 HostelHub/
-├── app.py              Creates the app (Vercel entrypoint), blueprints, filters, error pages
-├── config.py           Settings from environment variables + choice lists + production checks
-├── database.py         SQLite / PostgreSQL connection and query helpers (plain SQL)
-├── storage.py          Complaint photo storage: local folder or private Supabase bucket
+├── app.py              Creates the app (Vercel entrypoint), starts Firebase, blueprints, filters, error pages
+├── config.py           Settings from environment variables, the Firebase web config, choice lists, startup checks
+├── firebase_accounts.py  Sign-in accounts in Firebase Authentication (created/updated by the warden)
+├── data/               The database layer (Cloud Firestore)
+│   ├── store.py        The small interface the routes use
+│   ├── firestore_store.py  Firestore: numbered ids, atomic commits, no lost updates, guard documents
+│   └── queries.py      Joins and totals
+├── storage.py          Optional complaint photos: local folder or switched off (one place to add a cloud service)
 ├── helpers.py          Shared rules: allocation, notifications, upload validation
-├── seed.py             Rebuilds the demo database (SQLite, or PostgreSQL with confirmation)
-├── check_database.py   Checks the data for inconsistencies (both databases)
-├── view_data.py        Read-only viewer for the local SQLite data (tables, queries, live --watch)
-├── requirements.txt    Flask, psycopg, firebase-admin, python-dotenv, gunicorn
-├── render.yaml         Render Blueprint (web service, start command, environment variables)
+├── check_database.py   Checks the live Firestore data for inconsistencies (13 checks)
+├── requirements.txt    Flask, firebase-admin, python-dotenv
 ├── .python-version     Python version used by Vercel
 ├── .env.example        Names of the environment variables (no values)
 │
-├── database/schema.sql 8 tables, constraints and indexes (single source of truth)
 ├── routes/             One blueprint per feature
-│   ├── auth.py         login/logout, CSRF check, @student_required / @warden_required
+│   ├── auth.py         Firebase sign-in, logout, CSRF check, @student_required / @warden_required
 │   ├── account.py      notifications + profile (both roles)
 │   ├── student.py      student dashboard, My Room
 │   ├── warden.py       warden dashboard, student CRUD
@@ -137,48 +154,45 @@ HostelHub/
 │   ├── requests.py     room-change requests (both roles)
 │   └── college.py      college maintenance requests
 ├── templates/          base.html, _macros.html, and one folder per feature
-├── public/static/      css/, js/, images/ (served by Vercel's CDN; by Flask locally)
-├── uploads/complaints/ local photos only (git-ignored, private)
-├── tests/              110 automated tests (base.py + 7 test files)
-└── docs/               architecture, database, deployment, testing, viewing-data, viva
+├── public/static/      css/, js/, images/, vendor/ (served by Vercel's CDN; by Flask locally)
+├── tests/              automated tests with in-memory Firestore, Storage and Auth stand-ins
+└── docs/               architecture, database, deployment, testing, viva
 ```
 
-## 8. Database
+## 8. Database (Cloud Firestore)
 
-| Table | Purpose |
+| Collection | Purpose |
 |---|---|
-| `users` | Students and wardens (`role` column), hashed passwords |
+| `users` | Students and wardens (`role`), email, profile, `firebase_uid`. **No passwords** |
 | `rooms` | Block, floor, room number, capacity, status |
 | `beds` | Beds of each room; the status drives the map colours |
-| `allocations` | Which student has which bed; old rows are kept as history (`ended`) |
-| `complaints` | Maintenance complaints (photo stored as a generated file name) |
+| `allocations` | Which student has which bed; old documents are kept as history (`ended`) |
+| `complaints` | Maintenance complaints; `image_path` holds the optional photo's generated file name, never the image |
 | `room_change_requests` | Current, preferred and assigned bed, status |
 | `college_maintenance_requests` | Escalations to the college |
 | `notifications` | Per-user messages with read/unread state |
+| `counters` | Next number for each collection (so ids stay 1, 2, 3 … and CMP-0007 keeps working) |
+| `allocation_claims` | Guard documents `bed-<id>` / `student-<id>`: one active allocation per bed and per student |
 
-Two **partial unique indexes** (one active allocation per bed, one per student) make double allocation impossible at database level, in SQLite **and** PostgreSQL. Full details: [docs/database.md](docs/database.md).
+Double allocation is impossible even when two wardens click at the same moment: an allocation must create the guard document for the bed, and Firestore lets only one request create it. Every other change is written only if the document has not been changed by someone else since it was read. Full details: [docs/database.md](docs/database.md).
 
-## 9. Authentication approach
+## 9. Authentication
 
-There are two ways to log in. Both end the same way: the session stores only the **user id**, and the **role is read from our own database** on every request.
+Credentials live **only in Firebase Authentication**; HostelHub stores no passwords.
 
-1. **Continue with Google (Firebase Authentication)**, for real MES accounts.
-   - The login page opens Google's sign-in popup with the Firebase JavaScript SDK.
-   - Firebase gives the browser a signed **ID token**. The page sends it, plus the CSRF token, to `POST /firebase-login`.
-   - `authenticate_google()` in `routes/auth.py` verifies the token with the **Firebase Admin SDK**. The token must be genuine, unexpired and for our Firebase project.
-   - The email must be **verified** and end with `@student.mes.ac.in` (students) or `@mes.ac.in` (staff).
-   - The email must already be **registered by the warden** in HostelHub. Google alone is not enough.
-   - On first sign-in the Google account's id is saved in `users.firebase_uid`. A different Google account can never take over that user.
-   - **Firebase is used only to check who is logging in.** All hostel data stays in HostelHub's own database (SQLite locally).
-2. **Email + password**, for the demo accounts. Only a **hash** of the password is stored.
+1. The login page signs in with the Firebase JavaScript SDK, by **email and password** or with **Continue with Google**.
+2. Firebase gives the browser a signed **ID token**. The page sends it, plus the CSRF token, to `POST /firebase-login`.
+3. `authenticate_firebase()` in `routes/auth.py` verifies the token with the **Firebase Admin SDK** (genuine, unexpired, for our project).
+4. The email must end with `@student.mes.ac.in` (student) or `@mes.ac.in` (warden), and the person must already have a **user document in Firestore**. Signing in does not create an account by itself, so nobody can make themselves a warden.
+5. The role is taken from the Firestore user document and must match the email domain. The session stores only the user id; the role is read again on every request.
 
-Other rules:
-- Every **student** email must end with **`@student.mes.ac.in`** (the student form enforces it). The warden uses `@mes.ac.in`.
-- `@student_required` / `@warden_required` check the role on the server (403 if wrong).
+**One account per person.** Firebase keeps one account per email address and links the password and Google sign-in methods to it. The accounts the warden creates are marked as verified, so when a student who has a password later uses Google with the same college address, Firebase adds Google to the **same** account instead of replacing it. HostelHub stores that account's uid in `users.firebase_uid` and refuses a different Firebase account claiming the same address.
+
+There is no demo or quick login.
 
 ## 10. Workflows
 
-**Room / bed allocation:** on the map, click a green bed → choose a student waiting for a bed → *Allocate*. The allocation row is inserted and the bed becomes `occupied` in one transaction. *Vacate* ends the allocation and frees the bed.
+**Room / bed allocation:** on the map, click a green bed → choose a student waiting for a bed → *Allocate*. The allocation document is created and the bed becomes `occupied` in one atomic Firestore write. *Vacate* ends the allocation and frees the bed.
 
 **Maintenance:** `Submitted` → `Acknowledged` → `In Progress` → `Resolved` (or `Rejected`, which needs remarks). Every update notifies the student.
 
@@ -188,13 +202,14 @@ Other rules:
 
 **Notifications** are created by real events: new complaint and new room request (wardens); status changes, remarks, escalation, approval/rejection, allocation and vacating (the student concerned).
 
+
 ---
 
-## 11. Local development (SQLite)
+## 11. Running it on your computer
 
-Requires **Python 3.12 or newer**. No database server and no environment variables are needed.
+Requires **Python 3.12 or newer** and access to the Firebase project `hostelhub-83310`.
 
-**1. Get the code**
+**1. Get the code and install the requirements**
 
 ```bash
 git clone https://github.com/Kaustubhhbhoirr/HostelHub.git
@@ -204,152 +219,92 @@ git clone https://github.com/Kaustubhhbhoirr/HostelHub.git
 cd HostelHub
 ```
 
-**2. Create and activate a virtual environment**
-
 ```bash
 python -m venv .venv
 ```
 
-Windows PowerShell:
-
-```bash
-.venv\Scripts\Activate.ps1
-```
-
-macOS / Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-**3. Install the requirements**
+Windows PowerShell: `.venv\Scripts\Activate.ps1`. macOS / Linux: `source .venv/bin/activate`.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**4. Create the demo database** (this deletes and rebuilds `database/hostelhub.db`)
+**2. Give the app the Firebase service-account key.** In the Firebase console: *Project settings → Service accounts → Generate new private key*. Then either
+
+- save the downloaded file as `secrets/hostelhub-83310-firebase-adminsdk.json` (the `secrets/` folder is
+  git-ignored and listed in `.vercelignore`) and put its path in `.env` (a relative path is read from the
+  project folder): `FIREBASE_CREDENTIALS_FILE=secrets/hostelhub-83310-firebase-adminsdk.json`
+- or put the whole JSON on one line in `.env`: `FIREBASE_SERVICE_ACCOUNT='{"type": "service_account", ...}'`
+
+Copy `.env.example` to `.env` first. The public web config is already in `config.py`; leave `FIREBASE_CLIENT_CONFIG` empty. The app refuses to start if the key and the web config belong to different Firebase projects, and warns if the project is not `hostelhub-83310`.
+
+**3. Run the tests** (they use in-memory stand-ins and never touch the real project)
 
 ```bash
-python seed.py
+python -m unittest discover tests
 ```
 
-**See what is inside the database** (read-only; `--watch` prints new rows live while you use the app; full guide: [docs/viewing-data.md](docs/viewing-data.md)):
-
-```bash
-python view_data.py
-```
-
-**5. Check the data**
-
-```bash
-python check_database.py
-```
-
-**6. Run the tests**
-
-```bash
-python -m unittest discover tests -v
-```
-
-**7. Start the app**
+**4. Start the app**
 
 ```bash
 python app.py
 ```
 
-Open **http://localhost:5000**. Debug mode is off unless you set `HOSTELHUB_DEBUG=1`.
+Open **http://localhost:5000** (not `127.0.0.1`: only `localhost` is an authorised domain for Google sign-in). You are working on the live data.
 
-### Logging in
+**5. Check the live data** at any time (read-only):
 
-| Account | How to log in |
-|---|---|
-| `kaustubhb25comp@student.mes.ac.in` (Kaustubh Bhoir, student, room A-102) | **Continue with Google**; this account has no usable password |
-| `student@student.mes.ac.in` (demo student) | password `Student@123` |
-| `warden@mes.ac.in` (demo warden) | password `Warden@123` |
-
-Every other seeded student (e.g. `rohan.patil@student.mes.ac.in`) also uses `Student@123`. The demo names are fictional; passwords are stored hashed. Demo data: 3 blocks, 32 rooms, 100 beds, 73 students (72 demo + 1 Google account; 5 waiting for a bed), complaints in every status, 2 pending room changes, 4 college requests.
-
-To let another team member use Google login, the warden adds them under **Students → Add student** with their `@student.mes.ac.in` email, or you add them to `GOOGLE_STUDENTS` in `seed.py`.
-
-**Google login locally needs:**
-- the two `FIREBASE_*` values in a `.env` file (see section 12)
-- the app opened at **http://localhost:5000**. `127.0.0.1` is not an authorised domain in Firebase, so the Google popup would refuse it.
-
-> **On a public deployment, change the warden password immediately** (Profile → Change password), because these demo passwords are published in this README.
+```bash
+python check_database.py
+```
 
 ## 12. Environment variables
 
-Environment variables are settings given to the program from outside the code, so **secrets never go into Git**. `.env.example` lists the names; the real values go into Vercel's dashboard.
+`.env.example` lists the names. Locally the values go in `.env` (git-ignored); on Vercel in *Project → Settings → Environment Variables*.
 
-| Variable | Local | Deployment | Purpose |
-|---|---|---|---|
-| `HOSTELHUB_SECRET_KEY` | optional | **required** (≥ 32 random characters) | Signs the session cookie |
-| `DATABASE_URL` | leave empty | **required** (`postgresql://…`) | Hosted PostgreSQL connection string |
-| `SUPABASE_URL` | leave empty | **required** (`https://<project>.supabase.co`) | Photo storage service |
-| `SUPABASE_SECRET_KEY` | leave empty | **required** | Server-only key for the private bucket |
-| `SUPABASE_BUCKET` | – | optional (default `complaint-photos`) | Bucket name |
-| `HOSTELHUB_DEBUG` | `1` to debug | ignored | Flask debug pages |
-| `HOSTELHUB_ENV` | `production` to try production rules | – | Vercel sets `VERCEL=1` and Render sets `RENDER=true` automatically; both count as production |
-| `FIREBASE_CLIENT_CONFIG` | for Google login | for Google login | PUBLIC Firebase web config (JSON in single quotes) |
-| `FIREBASE_SERVICE_ACCOUNT` | for Google login | for Google login | **SECRET** service-account key (JSON in single quotes). Verifies Google tokens on the server; never commit or share it |
-| `HOSTELHUB_TEST_DATABASE_URL` | optional | – | Run the tests against an **empty** PostgreSQL test database |
+| Variable | Needed | Purpose |
+|---|---|---|
+| `FIREBASE_SERVICE_ACCOUNT` | **always** (or the next one) | **SECRET** service-account JSON: verifies sign-in tokens, reads/writes Firestore and Storage |
+| `FIREBASE_CREDENTIALS_FILE` | alternative locally | Path of the service-account JSON file |
+| `HOSTELHUB_SECRET_KEY` | **production** (≥ 32 random characters) | Signs the session cookie |
+| `FIREBASE_CLIENT_CONFIG` | no | PUBLIC web config; defaults to `hostelhub-83310` in `config.py` |
+| `COMPLAINT_IMAGE_STORAGE` | no | `local` (default on a laptop) or `none` (default on Vercel, where `local` is refused) |
+| `HOSTELHUB_DEBUG` | no | `1` for Flask debug pages locally (ignored in production) |
+| `HOSTELHUB_ENV` | no | `production` to try production rules locally (Vercel sets `VERCEL=1` itself) |
 
-Locally, put these in a file named **`.env`** in the project folder. `app.py` loads it with `python-dotenv`. `.env` is git-ignored and must never be committed. Without the `FIREBASE_*` values the Google button is simply hidden and password login still works.
+## 13. Deployment on Vercel
 
-If production is missing a required value, **the app refuses to start** and names the problem in the Vercel logs, instead of silently using the demo secret or a temporary SQLite file.
-
-## 13. GitHub and Vercel deployment
-
-Short version (the full step-by-step guide with troubleshooting is in **[docs/deployment.md](docs/deployment.md)**):
-
-1. Push the repository to GitHub (the database, `.env`, photos and virtual environment are git-ignored).
-2. Create a **Supabase** project: copy the *Transaction pooler* connection string (`DATABASE_URL`), create a **private** Storage bucket `complaint-photos`, copy the project URL and a secret key.
-3. From your computer, create the tables and demo data **once**:
-   set `DATABASE_URL` in your terminal, run `python seed.py` and type `RESET` to confirm.
-4. In **Vercel**: *Add New → Project → import the GitHub repository*. Vercel detects Flask from `app.py` and `requirements.txt`; no `vercel.json` is needed.
-5. Add the environment variables from section 12, deploy, then log in and change the warden password.
-
-The Flask app **never** seeds or resets the hosted database by itself.
-
-**Prefer Render?** The repository also contains a Render Blueprint ([`render.yaml`](render.yaml)) that runs the same app with `gunicorn`, keeping Supabase and Firebase unchanged. See [Deploying on Render](docs/deployment.md#10-deploying-on-render) for the setup, the environment variables, the Firebase authorised domain and the free-plan sleep behaviour.
+Full guide: **[docs/deployment.md](docs/deployment.md)**. In short: import the GitHub repository in Vercel (it detects Flask from `app.py`; no `vercel.json` needed), add `FIREBASE_SERVICE_ACCOUNT` and `HOSTELHUB_SECRET_KEY`, deploy, and add the Vercel domain to *Firebase → Authentication → Settings → Authorized domains*.
 
 ## 14. Security measures
 
 | Risk | Measure |
 |---|---|
-| Stolen passwords | Only salted hashes are stored (Werkzeug) |
+| Stolen passwords | HostelHub stores none; Firebase Authentication handles them |
+| Forged sign-in | Every ID token is verified with the Firebase Admin SDK on the server |
+| Self-registration as warden | Only people with a Firestore user document can sign in; the role must match the email domain |
 | Student opening warden pages | Server-side role decorators on every warden route (403) |
-| Changing the role in the cookie | Session holds only the user id; the role is read from the database |
+| Changing the role in the cookie | Session holds only the user id; the role is read from Firestore |
 | Seeing other students' data | Student queries filter by the logged-in id; others' records return 404 |
-| SQL injection | All values go through placeholders, in both SQLite and PostgreSQL |
-| Forged form posts (CSRF) | Random per-session token in every POST form, checked on the server (400 if wrong); `SameSite=Lax` cookie as an extra defence |
+| Two wardens at the same moment | Guard documents for allocations; every other write only if the document is unchanged since it was read |
+| Forged form posts (CSRF) | Random per-session token in every POST, checked on the server (400 if wrong); `SameSite=Lax` cookie |
 | Cookie theft on the network | `Secure` + `HttpOnly` session cookie in production |
 | Malicious uploads | Extension allow-list + MIME type + real file signature check, random file names, 4 MB limit |
-| Public photo URLs | Photos are private (local folder / private bucket) and only sent to the owner student or a warden; the storage key never reaches the browser |
-| Leaking errors or secrets | Friendly error pages; debug off in production; secrets only in environment variables; production refuses to start with the demo secret key |
+| Public photo URLs | Photos are never in a public folder; they are sent only to the owner student or a warden |
+| Leaked service-account key | Only in environment variables / git-ignored files; never sent to the browser |
 
 ## 15. Known limitations
 
-- **Not yet tested on a live Vercel + Supabase deployment.** PostgreSQL support was tested against a local PostgreSQL 18 server (all 91 tests pass), and the Supabase Storage calls against a fake server that follows the documented API. Check the first real deployment with the list in [docs/deployment.md](docs/deployment.md).
-- **Demo passwords are public**: change them after deploying.
-- **4 MB photo limit**, because Vercel rejects requests larger than 4.5 MB.
+- **Needs the internet**: every page reads Firestore.
+- **Photos only on the laptop**: the deployed site has no photo uploads until a cloud image service is added, and a photo uploaded on a laptop is not visible on the deployed site (the page says so). Photos are limited to 4 MB.
 - **No college login, no password reset by email, no login rate-limiting.**
-- **Needs internet** for Bootstrap, the icons and the font (CDN).
-- **Search treats `%` and `_` as wildcards** (SQL `LIKE`).
 - **Notifications appear on the next page load**, not in real time.
 - **Times are shown in Indian Standard Time** (UTC+5:30) for every user.
 
 ## 16. Future scope
 
-- Firebase Google sign-in limited to MES accounts
 - A college-admin role to respond to maintenance requests directly
 - Hostel fee and mess management
 - Export reports (occupancy, complaint turnaround) to PDF/Excel
 - Email or push notifications
 - Complaint analytics over time
-
-## 17. Recent Updates
-
-- **Student Email Validation:** Updated the Warden's "Add Student" form to strictly enforce the `@student.mes.ac.in` email domain for all new student accounts.
-- **Environment Variables:** Integrated `python-dotenv` into `app.py` so that local `.env` files are automatically loaded when running the Flask server locally.
